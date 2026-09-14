@@ -1,0 +1,47 @@
+{
+  "spy": [
+    {
+      "id": "spy_blindfold",
+      "name": "Yeux fermés",
+      "icon": "🙈",
+      "description": "Les espionnés doivent se rendre à l’endroit que vous indiquez et fermer les yeux 30 secondes. Aucune poursuite pendant ces 30 secondes.",
+      "unlockRequirement": "Prendre une photo de tous les membres des espionnés sur la même photo.",
+      "prompt": "À quel endroit doivent-ils se rendre ?",
+      "effect": "freeze",
+      "durationSec": 30,
+      "alsoBlock": true,
+      "requiresUnlock": true
+    },
+    {
+      "id": "spy_reset",
+      "name": "Défi annulé",
+      "icon": "🔄",
+      "description": "Un défi des espionnés est réinitialisé et repasse en « non fait ».",
+      "unlockRequirement": "Réaliser vous-même le défi que vous voulez réinitialiser.",
+      "prompt": "Quel défi est réinitialisé ?",
+      "effect": "notify",
+      "durationSec": 0,
+      "requiresUnlock": true
+    }
+  ],
+  "spied": [
+    {
+      "id": "spied_freeze",
+      "name": "Gel",
+      "icon": "🧊",
+      "description": "Les deux espions doivent rester figés sur place pendant 2 minutes.",
+      "effect": "freeze",
+      "durationSec": 120,
+      "requiresUnlock": false
+    },
+    {
+      "id": "spied_locate",
+      "name": "Localisation 5 minutes",
+      "icon": "📍",
+      "description": "Vous obtenez la position des espions en direct pendant 5 minutes.",
+      "effect": "reveal_opponents",
+      "durationSec": 300,
+      "requiresUnlock": false
+    }
+  ]
+}

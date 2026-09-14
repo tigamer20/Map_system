@@ -1,0 +1,8 @@
+node_modules/
+data/
+*.log
+npm-debug.log*
+
+# Local overrides — copy the .example files and edit
+config/codes.json
+config/jokers.json

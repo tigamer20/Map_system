@@ -1,0 +1,31 @@
+# Blueprint Render — https://render.com/docs/blueprint-spec
+# Déploiement : Render > New > Blueprint > choisir ce dépôt.
+services:
+  - type: web
+    name: traque
+    runtime: node
+    plan: starter            # "free" fonctionne aussi, mais s'endort après 15 min d'inactivité
+    region: frankfurt        # oregon / ohio / singapore / frankfurt
+    branch: main
+    buildCommand: npm install
+    startCommand: npm start
+    healthCheckPath: /api/config
+    autoDeploy: true
+    envVars:
+      - key: NODE_VERSION
+        value: 22.22.2
+      - key: APP_NAME
+        value: TRAQUE
+      # Codes d'accès : à définir dans le dashboard Render (Environment), pas ici,
+      # pour qu'ils ne soient pas publics dans le dépôt.
+      #   ACCESS_CODES = 11111:spy:Espion 1,22222:spy:Espion 2,33333:spied:Espionné 1,55555:admin:Maître du jeu,66666:viewer:Écran
+      - key: ACCESS_CODES
+        sync: false
+      # Clés de notifications push (node scripts/generate-vapid.js).
+      - key: VAPID_PUBLIC_KEY
+        sync: false
+      - key: VAPID_PRIVATE_KEY
+        sync: false
+      # Optionnel : fond de carte vectoriel MapTiler.
+      - key: MAPTILER_KEY
+        sync: false

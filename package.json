@@ -1,0 +1,22 @@
+{
+  "name": "traque",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Jeu de traque en direct : espions vs espionnés, carte live, validations et jokers.",
+  "type": "commonjs",
+  "main": "server/index.js",
+  "scripts": {
+    "start": "node server/index.js",
+    "dev": "node --watch server/index.js",
+    "vapid": "node scripts/generate-vapid.js"
+  },
+  "engines": {
+    "node": ">=18"
+  },
+  "dependencies": {
+    "express": "^4.19.2",
+    "maplibre-gl": "^6.9.1",
+    "web-push": "^3.6.7",
+    "ws": "^8.18.0"
+  }
+}

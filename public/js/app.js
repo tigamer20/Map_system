@@ -1,0 +1,1105 @@
+/* Traque — client: positions en direct, panneaux par rôle, alertes. */
+(function () {
+  'use strict';
+
+  const token = localStorage.getItem('spymap.token');
+  if (!token) {
+    location.replace('/');
+    return;
+  }
+
+  const el = (id) => document.getElementById(id);
+  const TEAM = { spy: 'Espions', spied: 'Espionnés' };
+  const TEAM_ONE = { spy: 'espions', spied: 'espionnés' };
+
+  const ui = {
+    app: el('app'),
+    roleChip: el('roleChip'),
+    roleText: el('roleText'),
+    statusChip: el('statusChip'),
+    statusText: el('statusText'),
+    clockChip: el('clockChip'),
+    clockText: el('clockText'),
+    sheet: el('sheet'),
+    sheetBody: el('sheetBody'),
+    tabs: el('tabs'),
+    toasts: el('toasts'),
+    alertLayer: el('alertLayer'),
+    alertTitle: el('alertTitle'),
+    alertBody: el('alertBody'),
+    alertIcon: el('alertIcon')
+  };
+
+  let config = {};
+  let gameMap = null;
+  let snapshot = null;
+  let socket = null;
+  let serverOffset = 0;
+  let activeTab = null;
+  let myPosition = null;
+  let lastFix = null;
+  let lastSent = 0;
+  let reconnectDelay = 1000;
+  let interactionUntil = 0;
+
+  const now = () => Date.now() + serverOffset;
+
+  /* --------------------------------------------------------------- helpers */
+
+  async function api(path, options) {
+    const res = await fetch(path, Object.assign({}, options, {
+      headers: Object.assign(
+        { 'content-type': 'application/json', authorization: `Bearer ${token}` },
+        (options || {}).headers
+      )
+    }));
+    if (res.status === 401) {
+      localStorage.removeItem('spymap.token');
+      location.replace('/');
+      throw new Error('Session expirée');
+    }
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) throw new Error(data.error || 'Une erreur est survenue.');
+    return data;
+  }
+
+  function toast(message, kind) {
+    const node = document.createElement('div');
+    node.className = `toast${kind ? ' ' + kind : ''}`;
+    node.textContent = message;
+    ui.toasts.appendChild(node);
+    setTimeout(() => node.remove(), 4200);
+  }
+
+  function fmtClock(ms) {
+    if (ms <= 0) return '0:00';
+    const total = Math.round(ms / 1000);
+    if (total >= 3600) {
+      return `${Math.floor(total / 3600)}:${String(Math.floor((total % 3600) / 60)).padStart(2, '0')}:${String(total % 60).padStart(2, '0')}`;
+    }
+    return `${Math.floor(total / 60)}:${String(total % 60).padStart(2, '0')}`;
+  }
+
+  function fmtAgo(ts) {
+    const secs = Math.max(0, Math.round((now() - ts) / 1000));
+    if (secs < 10) return "à l'instant";
+    if (secs < 60) return `il y a ${secs} s`;
+    if (secs < 3600) return `il y a ${Math.round(secs / 60)} min`;
+    return `il y a ${Math.round(secs / 3600)} h`;
+  }
+
+  const fmtTime = (ts) => new Date(ts).toLocaleTimeString('fr-FR', { hour: '2-digit', minute: '2-digit' });
+
+  function distance(a, b) {
+    const R = 6371000;
+    const toRad = (d) => (d * Math.PI) / 180;
+    const dLat = toRad(b.lat - a.lat);
+    const dLng = toRad(b.lng - a.lng);
+    const h =
+      Math.sin(dLat / 2) ** 2 +
+      Math.cos(toRad(a.lat)) * Math.cos(toRad(b.lat)) * Math.sin(dLng / 2) ** 2;
+    return 2 * R * Math.asin(Math.sqrt(h));
+  }
+
+  const fmtDistance = (m) =>
+    m == null ? '—' : m < 1000 ? `${Math.round(m)} m` : `${(m / 1000).toFixed(m < 10000 ? 2 : 1)} km`;
+
+  function escapeHtml(str) {
+    return String(str == null ? '' : str).replace(/[&<>"']/g, (c) => ({
+      '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;'
+    }[c]));
+  }
+
+  /* ---------------------------------------------------------------- alerts */
+
+  let audioCtx = null;
+  function chime() {
+    try {
+      audioCtx = audioCtx || new (window.AudioContext || window.webkitAudioContext)();
+      if (audioCtx.state === 'suspended') audioCtx.resume();
+      const start = audioCtx.currentTime;
+      [0, 0.22, 0.44].forEach((offset, i) => {
+        const osc = audioCtx.createOscillator();
+        const gain = audioCtx.createGain();
+        osc.type = 'sine';
+        osc.frequency.setValueAtTime([784, 988, 1319][i], start + offset);
+        gain.gain.setValueAtTime(0.0001, start + offset);
+        gain.gain.exponentialRampToValueAtTime(0.28, start + offset + 0.02);
+        gain.gain.exponentialRampToValueAtTime(0.0001, start + offset + 0.3);
+        osc.connect(gain).connect(audioCtx.destination);
+        osc.start(start + offset);
+        osc.stop(start + offset + 0.32);
+      });
+    } catch (err) {
+      /* le son reste un bonus */
+    }
+  }
+
+  // Deux alertes peuvent arriver coup sur coup : on les empile au lieu d'écraser
+  // la première, sinon un joueur peut ne jamais voir « Vous êtes repérés ».
+  const alertQueue = [];
+
+  function showAlert(data) {
+    if (data.observer) {
+      toast(`${data.title}${data.body ? ' — ' + data.body : ''}`);
+      return;
+    }
+    if (!ui.alertLayer.hidden) {
+      alertQueue.push(data);
+      return;
+    }
+    paintAlert(data);
+  }
+
+  function paintAlert(data) {
+    ui.alertTitle.textContent = data.title || 'Alerte';
+    ui.alertBody.textContent = data.body || '';
+    ui.alertIcon.textContent =
+      { joker: '🃏', exposed: '📡', granted: '📍', denied: '⛔', announce: '📣', request: '🔔' }[data.kind] || '⚠️';
+    ui.alertLayer.hidden = false;
+    el('alertDismiss').textContent = alertQueue.length ? `Compris (${alertQueue.length} autre${alertQueue.length > 1 ? 's' : ''})` : 'Compris';
+    chime();
+    if (navigator.vibrate) navigator.vibrate([200, 80, 200, 80, 380]);
+    if ('Notification' in window && Notification.permission === 'granted' && document.hidden) {
+      try {
+        new Notification(data.title || 'Traque', { body: data.body || '', icon: '/icons/icon.svg', tag: 'traque' });
+      } catch (err) {
+        /* certains navigateurs n'autorisent que les notifications du service worker */
+      }
+    }
+  }
+
+  el('alertDismiss').addEventListener('click', () => {
+    ui.alertLayer.hidden = true;
+    const next = alertQueue.shift();
+    if (next) setTimeout(() => paintAlert(next), 260);
+  });
+
+  /* ------------------------------------------------------------ websocket */
+
+  function connect() {
+    const proto = location.protocol === 'https:' ? 'wss' : 'ws';
+    socket = new WebSocket(`${proto}://${location.host}/ws`);
+
+    socket.addEventListener('open', () => {
+      reconnectDelay = 1000;
+      socket.send(JSON.stringify({ t: 'auth', token }));
+    });
+
+    socket.addEventListener('message', (event) => {
+      let msg;
+      try {
+        msg = JSON.parse(event.data);
+      } catch {
+        return;
+      }
+      if (msg.t === 'state') {
+        serverOffset = msg.data.now - Date.now();
+        snapshot = msg.data;
+        render();
+      } else if (msg.t === 'alert') {
+        showAlert(msg.data);
+      } else if (msg.t === 'unauthorized') {
+        localStorage.removeItem('spymap.token');
+        location.replace('/');
+      }
+    });
+
+    socket.addEventListener('close', () => {
+      setTimeout(connect, reconnectDelay);
+      reconnectDelay = Math.min(reconnectDelay * 1.6, 12000);
+    });
+
+    socket.addEventListener('error', () => socket.close());
+  }
+
+  function sendPosition(position) {
+    const payload = {
+      t: 'pos',
+      lat: position.coords.latitude,
+      lng: position.coords.longitude,
+      accuracy: position.coords.accuracy,
+      heading: position.coords.heading,
+      speed: position.coords.speed
+    };
+    if (socket && socket.readyState === 1) socket.send(JSON.stringify(payload));
+    else api('/api/position', { method: 'POST', body: JSON.stringify(payload) }).catch(() => {});
+  }
+
+  /* ---------------------------------------------------------- géoloc */
+
+  function startTracking() {
+    if (!navigator.geolocation) {
+      toast("Ce téléphone n'expose pas de GPS.", 'error');
+      return;
+    }
+    navigator.geolocation.watchPosition(
+      (position) => {
+        const coords = position.coords;
+        const point = { lat: coords.latitude, lng: coords.longitude, accuracy: coords.accuracy };
+        const moved = !myPosition || distance(myPosition, point) > 3;
+        myPosition = point;
+        lastFix = position;
+
+        gameMap.setAccuracy(point.lng, point.lat, coords.accuracy);
+        gameMap.followTo(point.lng, point.lat);
+
+        if (moved || Date.now() - lastSent > 4000) {
+          lastSent = Date.now();
+          sendPosition(position);
+        }
+        setStatus(`GPS ±${Math.round(coords.accuracy)} m`, 'live');
+      },
+      (err) => {
+        const messages = {
+          1: 'Autorisation de localisation refusée.',
+          2: 'Position indisponible. Sortez et réessayez.',
+          3: 'Le GPS met du temps, on réessaie…'
+        };
+        setStatus(messages[err.code] || 'Erreur GPS', 'warn');
+      },
+      { enableHighAccuracy: true, maximumAge: 0, timeout: 20000 }
+    );
+
+    // Un téléphone immobile peut rester muet plusieurs minutes : on renvoie le
+    // dernier point pour ne jamais disparaître de la carte.
+    setInterval(() => {
+      if (lastFix) sendPosition(lastFix);
+    }, 8000);
+
+    keepAwake();
+  }
+
+  async function keepAwake() {
+    if (!('wakeLock' in navigator)) return;
+    let lock = null;
+    const acquire = async () => {
+      try {
+        lock = await navigator.wakeLock.request('screen');
+      } catch (err) {
+        /* refusé ou non supporté */
+      }
+    };
+    await acquire();
+    document.addEventListener('visibilitychange', () => {
+      if (document.visibilityState === 'visible' && (!lock || lock.released)) acquire();
+    });
+  }
+
+  function setStatus(text, kind) {
+    ui.statusChip.hidden = false;
+    ui.statusChip.className = `chip ${kind || ''}`;
+    ui.statusText.textContent = text;
+  }
+
+  /* ------------------------------------------------------- push (mobile) */
+
+  function urlBase64ToUint8Array(base64) {
+    const padding = '='.repeat((4 - (base64.length % 4)) % 4);
+    const raw = atob((base64 + padding).replace(/-/g, '+').replace(/_/g, '/'));
+    return Uint8Array.from([...raw].map((c) => c.charCodeAt(0)));
+  }
+
+  async function enablePush() {
+    if (!('serviceWorker' in navigator) || !('PushManager' in window) || !config.vapidPublicKey) {
+      toast('Notifications indisponibles sur cet appareil.', 'error');
+      return;
+    }
+    try {
+      const registration = await navigator.serviceWorker.register('/sw.js');
+      const permission = await Notification.requestPermission();
+      if (permission !== 'granted') return;
+      const existing = await registration.pushManager.getSubscription();
+      const subscription =
+        existing ||
+        (await registration.pushManager.subscribe({
+          userVisibleOnly: true,
+          applicationServerKey: urlBase64ToUint8Array(config.vapidPublicKey)
+        }));
+      await api('/api/push/subscribe', { method: 'POST', body: JSON.stringify(subscription.toJSON()) });
+      toast('Notifications activées sur ce téléphone.', 'ok');
+    } catch (err) {
+      toast('Notifications indisponibles sur cet appareil.', 'error');
+    }
+  }
+
+  /* ---------------------------------------------------------------- tabs */
+
+  const TABS = {
+    player: [
+      { id: 'players', label: 'Carte' },
+      { id: 'jokers', label: 'Jokers' },
+      { id: 'requests', label: 'Demandes' },
+      { id: 'feed', label: 'Journal' }
+    ],
+    admin: [
+      { id: 'requests', label: 'Validations' },
+      { id: 'control', label: 'Contrôle' },
+      { id: 'codes', label: 'Codes' },
+      { id: 'feed', label: 'Journal' }
+    ],
+    viewer: [
+      { id: 'players', label: 'Joueurs' },
+      { id: 'feed', label: 'Journal' },
+      { id: 'control', label: 'Résumé' }
+    ]
+  };
+
+  function renderTabs() {
+    const tabs = TABS[snapshot.me.role] || TABS.player;
+    if (!activeTab) activeTab = tabs[0].id;
+
+    const pending = (snapshot.requests || []).filter((r) => r.status === 'pending').length;
+    ui.tabs.innerHTML = tabs
+      .map((tab) => {
+        const badge = tab.id === 'requests' && pending ? `<span class="badge">${pending}</span>` : '';
+        return `<button class="tab${tab.id === activeTab ? ' active' : ''}" data-tab="${tab.id}">${tab.label}${badge}</button>`;
+      })
+      .join('');
+
+    ui.tabs.querySelectorAll('.tab').forEach((node) => {
+      node.addEventListener('click', () => {
+        activeTab = node.dataset.tab;
+        ui.sheet.classList.remove('collapsed');
+        render(true);
+      });
+    });
+  }
+
+  /* -------------------------------------------------------------- panneaux */
+
+  function playerCard(player) {
+    const dist = myPosition ? distance(myPosition, player) : null;
+    const isMe = player.code === snapshot.me.code;
+    return `
+      <div class="card ${player.team}">
+        <div class="card-head">
+          <div class="avatar ${player.team}">${escapeHtml(window.mapUtils.initials(player.name))}</div>
+          <div style="flex:1;min-width:0">
+            <div class="card-title">${escapeHtml(player.name)}${isMe ? ' (vous)' : ''}</div>
+            <div class="card-sub">${TEAM[player.team]} · ${player.stale ? 'signal perdu' : 'en direct'} · ${fmtAgo(player.ts)}</div>
+          </div>
+          <button class="btn ghost small" data-goto="${player.code}">Voir</button>
+        </div>
+        <div class="meta">
+          ${dist != null && !isMe ? `<span>Distance <b>${fmtDistance(dist)}</b></span>` : ''}
+          ${player.accuracy != null ? `<span>Précision <b>±${Math.round(player.accuracy)} m</b></span>` : ''}
+          ${player.speed ? `<span>Vitesse <b>${(player.speed * 3.6).toFixed(1)} km/h</b></span>` : ''}
+        </div>
+      </div>`;
+  }
+
+  function renderPlayersPanel() {
+    const me = snapshot.me;
+    const isPlayer = me.role === 'player';
+    let html = '';
+
+    if (isPlayer) {
+      const reveal = snapshot.game.reveals[me.team];
+      const remaining = reveal.until - now();
+      if (snapshot.jammed) {
+        html += `<div class="card alertish"><div class="card-title">Demandes bloquées</div>
+          <div class="card-sub">Un joker adverse vous bloque encore ${fmtClock(snapshot.game.blocks[me.team].until - now())}.</div></div>`;
+      } else if (remaining > 0) {
+        html += `<div class="card accent"><div class="card-title">Suivi en direct — <span class="countdown">${fmtClock(remaining)}</span></div>
+          <div class="card-sub">Vous voyez les ${TEAM_ONE[me.team === 'spy' ? 'spied' : 'spy']} sur la carte jusqu'à la fin du compte à rebours.</div></div>`;
+      }
+      (snapshot.effects || []).forEach((effect) => {
+        html += `<div class="card alertish"><div class="card-title">${escapeHtml(effect.label)}</div>
+          <div class="card-sub">Encore <span class="countdown">${fmtClock(effect.until - now())}</span></div></div>`;
+      });
+    }
+
+    const mine = snapshot.players.filter((p) => p.team === me.team);
+    const others = snapshot.players.filter((p) => p.team !== me.team);
+    const first = isPlayer ? mine : snapshot.players.filter((p) => p.team === 'spy');
+    const second = isPlayer ? others : snapshot.players.filter((p) => p.team === 'spied');
+
+    html += `<div class="section-label">${isPlayer ? 'Votre équipe' : 'Espions'}</div>`;
+    html += first.length ? first.map(playerCard).join('') : '<div class="empty">Personne ne partage encore sa position.</div>';
+
+    html += `<div class="section-label">${isPlayer ? 'Équipe adverse' : 'Espionnés'}</div>`;
+    if (second.length) {
+      html += second.map(playerCard).join('');
+    } else if (isPlayer && me.isHunter) {
+      html += `<div class="empty">Aucun accès à la position des ${TEAM_ONE[me.team === 'spy' ? 'spied' : 'spy']}.<br />Faites une demande depuis l'onglet Demandes.</div>`;
+    } else {
+      html += '<div class="empty">Position masquée.</div>';
+    }
+
+    if (snapshot.pins && snapshot.pins.length) {
+      html += '<div class="section-label">Positions figées</div>';
+      html += snapshot.pins
+        .map(
+          (pin) => `<div class="card ${pin.team}">
+            <div class="card-title">${escapeHtml(pin.label)} — vu à ${fmtTime(pin.ts)}</div>
+            <div class="card-sub">Point figé, disparaît dans ${fmtClock(pin.expiresAt - now())}.</div>
+            <div class="card-actions"><button class="btn ghost small" data-goto-pin="${pin.id}">Voir sur la carte</button></div>
+          </div>`
+        )
+        .join('');
+    }
+
+    return html;
+  }
+
+  function renderJokersPanel() {
+    const jokers = snapshot.jokers || [];
+    const pending = (snapshot.myRequests || []).filter((r) => r.status === 'pending' && r.type === 'unlock');
+
+    let html = `<div class="section-label">Vos 2 jokers</div>`;
+    html += jokers
+      .map((joker) => {
+        const waiting = pending.find((r) => r.payload.jokerId === joker.id);
+        const used = !!joker.usedAt;
+        const locked = joker.requiresUnlock && !joker.unlocked;
+
+        let state = '<span class="pill ok">Prêt</span>';
+        if (used) state = '<span class="pill used">Utilisé</span>';
+        else if (locked) state = '<span class="pill locked">À débloquer</span>';
+
+        let actions = '';
+        if (used) {
+          actions = `<span class="card-sub">Joué à ${fmtTime(joker.usedAt)}${joker.detail ? ` · ${escapeHtml(joker.detail)}` : ''}</span>`;
+        } else if (locked) {
+          actions = waiting
+            ? '<span class="card-sub">Le maître du jeu vérifie votre défi…</span>'
+            : `<button class="btn small" data-unlock="${joker.id}">Défi fait, débloquer</button>`;
+        } else {
+          actions = `<button class="btn small" data-play="${joker.id}">Jouer ce joker</button>`;
+        }
+
+        return `<div class="card joker ${joker.team}${used ? ' used' : ''}">
+          <div class="card-head">
+            <div class="avatar ${joker.team}">${escapeHtml(joker.icon || '★')}</div>
+            <div style="flex:1;min-width:0">
+              <div class="card-title">${escapeHtml(joker.name)}</div>
+            </div>
+            ${state}
+          </div>
+          <div class="card-sub" style="margin-top:8px">${escapeHtml(joker.description)}</div>
+          ${
+            locked && joker.unlockRequirement
+              ? `<div class="req"><b>Défi à réaliser</b>${escapeHtml(joker.unlockRequirement)}</div>`
+              : ''
+          }
+          ${
+            !used && !locked && joker.prompt
+              ? `<div class="field" style="margin-top:12px"><label for="detail_${joker.id}">${escapeHtml(joker.prompt)}</label>
+                 <input id="detail_${joker.id}" maxlength="160" placeholder="Votre réponse" /></div>`
+              : ''
+          }
+          <div class="card-actions">${actions}</div>
+        </div>`;
+      })
+      .join('');
+
+    html += `<div class="empty">Chaque joker ne sert qu'une seule fois. L'équipe adverse reçoit une notification dès qu'il est joué.</div>`;
+    return html;
+  }
+
+  function renderRequestsPanel() {
+    const me = snapshot.me;
+
+    if (me.role === 'player') {
+      let html = '';
+      if (me.isHunter) {
+        html += `<div class="card accent">
+          <div class="card-title">Demander la position des ${TEAM_ONE[me.team === 'spy' ? 'spied' : 'spy']}</div>
+          <div class="card-sub">Le maître du jeu décide. Le suivi en direct dure quelques minutes, l'envoi ponctuel pose un seul point figé.</div>
+          <div class="card-actions">
+            <button class="btn small" data-request="live">Suivi en direct</button>
+            <button class="btn ghost small" data-request="snapshot">Envoi ponctuel</button>
+          </div>
+        </div>`;
+      } else {
+        html += `<div class="card alertish">
+          <div class="card-title">Vous êtes traqués</div>
+          <div class="card-sub">Les ${TEAM_ONE[me.team === 'spy' ? 'spied' : 'spy']} doivent passer par le maître du jeu pour obtenir votre position. Vous êtes prévenus à chaque fois.</div>
+        </div>`;
+      }
+
+      html += '<div class="section-label">Historique de votre équipe</div>';
+      const list = snapshot.myRequests || [];
+      const label = { pending: 'en attente', approved: 'acceptée', denied: 'refusée' };
+      html += list.length
+        ? list
+            .map(
+              (r) => `<div class="card">
+                <div class="card-title">${r.type === 'unlock' ? 'Déblocage de joker' : 'Localisation'} · ${label[r.status] || r.status}</div>
+                <div class="card-sub">${fmtTime(r.createdAt)} · demandé par ${escapeHtml(r.from)}${r.note ? ` · « ${escapeHtml(r.note)} »` : ''}</div>
+              </div>`
+            )
+            .join('')
+        : '<div class="empty">Aucune demande pour le moment.</div>';
+      return html;
+    }
+
+    const requests = snapshot.requests || [];
+    const pending = requests.filter((r) => r.status === 'pending');
+    const done = requests.filter((r) => r.status !== 'pending').slice(0, 12);
+
+    let html = '<div class="section-label">En attente de votre validation</div>';
+    html += pending.length
+      ? pending
+          .map((r) => {
+            const joker =
+              r.type === 'unlock' ? (snapshot.jokers[r.team] || []).find((j) => j.id === r.payload.jokerId) : null;
+            return `<div class="card ${r.team}">
+              <div class="card-title">${TEAM[r.team]} · ${joker ? escapeHtml(joker.name) : 'Localisation'}</div>
+              <div class="card-sub">Demandé par ${escapeHtml(r.from)} à ${fmtTime(r.createdAt)}</div>
+              ${
+                joker
+                  ? `<div class="req"><b>Défi à vérifier</b>${escapeHtml(joker.unlockRequirement || '—')}</div>`
+                  : `<div class="req"><b>Mode demandé</b>${r.payload.mode === 'snapshot' ? 'Envoi ponctuel (point figé)' : 'Suivi en direct'}</div>`
+              }
+              <div class="card-actions">
+                ${
+                  joker
+                    ? `<button class="btn small" data-decide="${r.id}" data-approve="1">Valider le défi</button>`
+                    : `<button class="btn small" data-decide="${r.id}" data-approve="1" data-mode="${r.payload.mode || 'live'}" data-minutes="3">Accorder 3 min</button>
+                       <button class="btn ghost small" data-decide="${r.id}" data-approve="1" data-mode="${r.payload.mode || 'live'}" data-minutes="10">10 min</button>`
+                }
+                <button class="btn danger small" data-decide="${r.id}" data-approve="0">Refuser</button>
+              </div>
+            </div>`;
+          })
+          .join('')
+      : '<div class="empty">Rien à valider pour le moment.</div>';
+
+    html += '<div class="section-label">Décisions récentes</div>';
+    const label = { approved: 'acceptée', denied: 'refusée' };
+    html += done.length
+      ? done
+          .map(
+            (r) => `<div class="event"><time>${fmtTime(r.decidedAt || r.createdAt)}</time>
+              <span class="kind ${r.status === 'denied' ? 'denied' : 'request'}"></span>
+              <span>${TEAM[r.team]} · ${r.type === 'unlock' ? 'joker' : 'localisation'} · <b>${label[r.status] || r.status}</b></span></div>`
+          )
+          .join('')
+      : '<div class="empty">Aucune décision pour le moment.</div>';
+    return html;
+  }
+
+  function renderControlPanel() {
+    const isAdmin = snapshot.me.role === 'admin';
+    const g = snapshot.game;
+    const hunters = g.settings.hunters;
+    let html = '';
+
+    if (isAdmin) {
+      const left = g.endsAt - now();
+      html += `<div class="card accent">
+        <div class="card-title">Chrono — <span class="countdown">${g.status === 'ended' || left <= 0 ? 'terminé' : fmtClock(left)}</span></div>
+        <div class="card-sub">Durée prévue : ${Math.round(g.settings.durationMin / 60)} h. Traqueurs : ${TEAM[hunters]}.</div>
+        <div class="card-actions">
+          <button class="btn small" data-clock="start" data-minutes="${g.settings.durationMin}">Démarrer / relancer</button>
+          <button class="btn ghost small" data-clock="stop">Arrêter</button>
+        </div>
+      </div>`;
+    }
+
+    html += '<div class="section-label">Accès aux positions</div>';
+    ['spy', 'spied'].forEach((team) => {
+      const reveal = g.reveals[team];
+      const block = g.blocks[team];
+      const remaining = reveal.until - now();
+      html += `<div class="card ${team}">
+        <div class="card-title">${TEAM[team]} voient les ${TEAM_ONE[team === 'spy' ? 'spied' : 'spy']}</div>
+        <div class="card-sub">${
+          block.until > now()
+            ? `Bloqué ${fmtClock(block.until - now())} (${escapeHtml(block.reason || 'joker')})`
+            : remaining > 0
+            ? `Actif — <span class="countdown">${fmtClock(remaining)}</span>`
+            : 'Aucun accès'
+        }</div>
+        ${
+          isAdmin
+            ? `<div class="card-actions">
+                <button class="btn small" data-reveal="${team}" data-minutes="3">+3 min</button>
+                <button class="btn ghost small" data-reveal="${team}" data-minutes="10">+10 min</button>
+                <button class="btn ghost small" data-reveal="${team}" data-mode="snapshot">Point figé</button>
+                <button class="btn danger small" data-reveal="${team}" data-revoke="1">Couper</button>
+              </div>`
+            : ''
+        }
+      </div>`;
+    });
+
+    if (isAdmin) {
+      html += '<div class="section-label">Immobiliser une équipe</div>';
+      html += `<div class="card">
+        <div class="card-sub">Pour la règle « rester figé 30 secondes après avoir envoyé sa position », ou toute pause décidée en jeu.</div>
+        <div class="card-actions">
+          <button class="btn ghost small" data-freeze="spy" data-seconds="30">Espions 30 s</button>
+          <button class="btn ghost small" data-freeze="spy" data-seconds="120">Espions 2 min</button>
+          <button class="btn ghost small" data-freeze="spied" data-seconds="30">Espionnés 30 s</button>
+          <button class="btn ghost small" data-freeze="spied" data-seconds="120">Espionnés 2 min</button>
+        </div>
+      </div>`;
+
+      html += '<div class="section-label">Message aux équipes</div>';
+      html += `<div class="card">
+        <div class="field"><label for="announceText">Message (arrive en alerte sur les téléphones)</label>
+          <textarea id="announceText" rows="2" placeholder="Rendez-vous à la fontaine dans 10 minutes."></textarea></div>
+        <div class="field"><label for="announceTeam">Destinataires</label>
+          <select id="announceTeam"><option value="all">Les deux équipes</option><option value="spy">Espions</option><option value="spied">Espionnés</option></select>
+        </div>
+        <button class="btn small" id="announceBtn">Envoyer</button>
+      </div>`;
+
+      html += '<div class="section-label">État des jokers</div>';
+      ['spy', 'spied'].forEach((team) => {
+        (snapshot.jokers[team] || []).forEach((joker) => {
+          const state = joker.usedAt
+            ? `Joué à ${fmtTime(joker.usedAt)}${joker.detail ? ` · ${escapeHtml(joker.detail)}` : ''}`
+            : joker.requiresUnlock && !joker.unlocked
+            ? 'À débloquer par un défi'
+            : 'Disponible';
+          html += `<div class="card ${team}">
+            <div class="card-title">${escapeHtml(joker.icon || '')} ${escapeHtml(joker.name)} · ${TEAM[team]}</div>
+            <div class="card-sub">${state} — ${escapeHtml(joker.description)}</div>
+          </div>`;
+        });
+      });
+
+      html += '<div class="section-label">Zone sensible</div>';
+      html += `<div class="card"><div class="card-sub">Remet à zéro les jokers, les compteurs, les points figés et le journal. Les codes restent valides.</div>
+        <div class="card-actions"><button class="btn danger small" id="resetBtn">Réinitialiser la partie</button></div></div>`;
+    } else {
+      html += '<div class="section-label">Distances</div>';
+      const spies = snapshot.players.filter((p) => p.team === 'spy');
+      const spied = snapshot.players.filter((p) => p.team === 'spied');
+      const rows = [];
+      spied.forEach((h) => spies.forEach((t) => rows.push({ h, t, d: distance(h, t) })));
+      rows.sort((a, b) => a.d - b.d);
+      html += rows.length
+        ? rows
+            .slice(0, 12)
+            .map(
+              (row) => `<div class="event"><time>${fmtDistance(row.d)}</time><span class="kind reveal"></span>
+                <span>${escapeHtml(row.h.name)} → ${escapeHtml(row.t.name)}</span></div>`
+            )
+            .join('')
+        : '<div class="empty">En attente des deux équipes.</div>';
+    }
+
+    html += `<div class="section-label">Cet appareil</div>
+      <div class="card"><div class="card-title">${escapeHtml(snapshot.me.label)}</div>
+      <div class="card-sub">Code ${escapeHtml(snapshot.me.code)} · ${snapshot.me.role}</div>
+      <div class="card-actions">
+        <button class="btn ghost small" id="pushBtn">Activer les notifications</button>
+        <button class="btn danger small" id="logoutBtn">Se déconnecter</button>
+      </div></div>`;
+    return html;
+  }
+
+  function renderCodesPanel() {
+    const roster = snapshot.roster || [];
+    const roleLabel = { player: 'joueur', admin: 'maître du jeu', viewer: 'spectateur' };
+    let html = '<div class="section-label">Codes d\'accès</div>';
+    html += roster
+      .map(
+        (entry) => `<div class="card ${entry.team || ''}">
+          <div class="code-pill">${escapeHtml(entry.code)}</div>
+          <div class="card-sub">${escapeHtml(entry.label)} · ${roleLabel[entry.role] || entry.role}${entry.team ? ' · ' + TEAM[entry.team] : ''} · ${entry.online ? 'sur la carte' : 'inactif'}</div>
+          <div class="card-actions">
+            <button class="btn ghost small" data-rotate="${entry.code}">Nouveau code</button>
+            <button class="btn danger small" data-remove="${entry.code}">Supprimer</button>
+          </div>
+        </div>`
+      )
+      .join('');
+
+    html += '<div class="section-label">Ajouter un code</div>';
+    html += `<div class="card">
+      <div class="field"><label for="newLabel">Nom sur la carte</label><input id="newLabel" placeholder="Espion 3" /></div>
+      <div class="row">
+        <div class="field"><label for="newRole">Rôle</label>
+          <select id="newRole"><option value="player">Joueur</option><option value="admin">Maître du jeu</option><option value="viewer">Spectateur</option></select>
+        </div>
+        <div class="field"><label for="newTeam">Équipe</label>
+          <select id="newTeam"><option value="spy">Espions</option><option value="spied">Espionnés</option></select>
+        </div>
+      </div>
+      <button class="btn small" id="addCodeBtn">Générer le code</button>
+    </div>`;
+    return html;
+  }
+
+  function renderFeedPanel() {
+    const events = snapshot.events || [];
+    if (!events.length) return '<div class="empty">Rien ne s\'est encore passé.</div>';
+    return events
+      .map(
+        (event) => `<div class="event"><time>${fmtTime(event.ts)}</time><span class="kind ${event.kind}"></span><span>${escapeHtml(event.text)}</span></div>`
+      )
+      .join('');
+  }
+
+  /* -------------------------------------------------------------- render */
+
+  function render(force) {
+    if (!snapshot) return;
+
+    const me = snapshot.me;
+    ui.roleChip.className = `chip ${me.team || ''}`;
+    ui.roleText.textContent = me.role === 'player' ? `${me.label} · ${TEAM[me.team]}` : me.label;
+
+    if (me.role !== 'player') {
+      const live = snapshot.players.filter((p) => !p.stale).length;
+      setStatus(`${live} joueur${live === 1 ? '' : 's'} en direct`, live ? 'live' : '');
+    }
+
+    const left = snapshot.game.endsAt - now();
+    ui.clockChip.hidden = false;
+    ui.clockChip.className = `chip clock${left <= 0 || snapshot.game.status === 'ended' ? ' warn' : left < 15 * 60 * 1000 ? ' warn' : ''}`;
+    ui.clockText.textContent = left <= 0 || snapshot.game.status === 'ended' ? 'Partie terminée' : fmtClock(left);
+
+    gameMap.render(snapshot.players, me.code);
+    gameMap.renderPins(snapshot.pins || []);
+
+    renderTabs();
+
+    // Le panneau se redessine chaque seconde pour les compte à rebours : on ne
+    // retire jamais le DOM sous un doigt déjà posé sur un bouton.
+    if (!force && Date.now() < interactionUntil) return;
+
+    const panels = {
+      players: renderPlayersPanel,
+      jokers: renderJokersPanel,
+      requests: renderRequestsPanel,
+      control: renderControlPanel,
+      codes: renderCodesPanel,
+      feed: renderFeedPanel
+    };
+
+    const scroll = ui.sheetBody.scrollTop;
+    const focusId = document.activeElement ? document.activeElement.id : null;
+    const values = {};
+    ui.sheetBody.querySelectorAll('input[id], select[id], textarea[id]').forEach((node) => {
+      values[node.id] = node.value;
+    });
+
+    ui.sheetBody.innerHTML = (panels[activeTab] || renderPlayersPanel)();
+
+    Object.keys(values).forEach((id) => {
+      const node = el(id);
+      if (node) node.value = values[id];
+    });
+    ui.sheetBody.scrollTop = scroll;
+    if (focusId && el(focusId)) el(focusId).focus();
+    wirePanel();
+  }
+
+  /* ------------------------------------------------------------- actions */
+
+  function wirePanel() {
+    const body = ui.sheetBody;
+
+    body.querySelectorAll('[data-goto]').forEach((node) =>
+      node.addEventListener('click', () => {
+        const player = snapshot.players.find((p) => p.code === node.dataset.goto);
+        if (player) {
+          gameMap.follow = false;
+          gameMap.centerOn(player.lng, player.lat, 17);
+          ui.sheet.classList.add('collapsed');
+        }
+      })
+    );
+
+    body.querySelectorAll('[data-goto-pin]').forEach((node) =>
+      node.addEventListener('click', () => {
+        const pin = (snapshot.pins || []).find((p) => p.id === node.dataset.gotoPin);
+        if (pin) {
+          gameMap.follow = false;
+          gameMap.centerOn(pin.lng, pin.lat, 17);
+          ui.sheet.classList.add('collapsed');
+        }
+      })
+    );
+
+    body.querySelectorAll('[data-request]').forEach((node) =>
+      node.addEventListener('click', async () => {
+        node.disabled = true;
+        try {
+          await api('/api/request', {
+            method: 'POST',
+            body: JSON.stringify({ type: 'location', payload: { mode: node.dataset.request } })
+          });
+          toast('Demande envoyée au maître du jeu.', 'ok');
+        } catch (err) {
+          toast(err.message, 'error');
+        }
+        node.disabled = false;
+      })
+    );
+
+    body.querySelectorAll('[data-unlock]').forEach((node) =>
+      node.addEventListener('click', async () => {
+        const joker = (snapshot.jokers || []).find((j) => j.id === node.dataset.unlock);
+        if (!confirm(`Défi à valider :\n\n${joker.unlockRequirement}\n\nLe maître du jeu doit confirmer.`)) return;
+        node.disabled = true;
+        try {
+          await api('/api/request', {
+            method: 'POST',
+            body: JSON.stringify({ type: 'unlock', payload: { jokerId: joker.id } })
+          });
+          toast('Déblocage envoyé au maître du jeu.', 'ok');
+        } catch (err) {
+          toast(err.message, 'error');
+        }
+        node.disabled = false;
+      })
+    );
+
+    body.querySelectorAll('[data-play]').forEach((node) =>
+      node.addEventListener('click', async () => {
+        const joker = (snapshot.jokers || []).find((j) => j.id === node.dataset.play);
+        const input = el(`detail_${joker.id}`);
+        const detail = input ? input.value.trim() : '';
+        if (joker.prompt && !detail) {
+          toast(joker.prompt, 'error');
+          if (input) input.focus();
+          return;
+        }
+        if (!confirm(`Jouer « ${joker.name} » ?\n\n${joker.description}${detail ? `\n\n${detail}` : ''}`)) return;
+        node.disabled = true;
+        try {
+          await api('/api/joker/play', { method: 'POST', body: JSON.stringify({ jokerId: joker.id, detail }) });
+          toast('Joker joué.', 'ok');
+        } catch (err) {
+          toast(err.message, 'error');
+          node.disabled = false;
+        }
+      })
+    );
+
+    body.querySelectorAll('[data-decide]').forEach((node) =>
+      node.addEventListener('click', async () => {
+        node.disabled = true;
+        try {
+          await api('/api/admin/decide', {
+            method: 'POST',
+            body: JSON.stringify({
+              id: node.dataset.decide,
+              approve: node.dataset.approve === '1',
+              minutes: node.dataset.minutes ? Number(node.dataset.minutes) : undefined,
+              mode: node.dataset.mode
+            })
+          });
+        } catch (err) {
+          toast(err.message, 'error');
+          node.disabled = false;
+        }
+      })
+    );
+
+    body.querySelectorAll('[data-reveal]').forEach((node) =>
+      node.addEventListener('click', async () => {
+        try {
+          await api('/api/admin/reveal', {
+            method: 'POST',
+            body: JSON.stringify({
+              team: node.dataset.reveal,
+              minutes: node.dataset.minutes ? Number(node.dataset.minutes) : undefined,
+              mode: node.dataset.mode,
+              revoke: node.dataset.revoke === '1'
+            })
+          });
+        } catch (err) {
+          toast(err.message, 'error');
+        }
+      })
+    );
+
+    body.querySelectorAll('[data-freeze]').forEach((node) =>
+      node.addEventListener('click', async () => {
+        try {
+          await api('/api/admin/freeze', {
+            method: 'POST',
+            body: JSON.stringify({ team: node.dataset.freeze, seconds: Number(node.dataset.seconds) })
+          });
+          toast('Équipe immobilisée.', 'ok');
+        } catch (err) {
+          toast(err.message, 'error');
+        }
+      })
+    );
+
+    body.querySelectorAll('[data-clock]').forEach((node) =>
+      node.addEventListener('click', async () => {
+        if (node.dataset.clock === 'start' && !confirm('Relancer le chrono depuis maintenant ?')) return;
+        try {
+          await api('/api/admin/clock', {
+            method: 'POST',
+            body: JSON.stringify({ action: node.dataset.clock, minutes: Number(node.dataset.minutes) || undefined })
+          });
+        } catch (err) {
+          toast(err.message, 'error');
+        }
+      })
+    );
+
+    const announceBtn = el('announceBtn');
+    if (announceBtn) {
+      announceBtn.addEventListener('click', async () => {
+        const text = el('announceText').value.trim();
+        if (!text) return;
+        try {
+          await api('/api/admin/announce', {
+            method: 'POST',
+            body: JSON.stringify({ text, team: el('announceTeam').value })
+          });
+          el('announceText').value = '';
+          toast('Message envoyé.', 'ok');
+        } catch (err) {
+          toast(err.message, 'error');
+        }
+      });
+    }
+
+    const addCodeBtn = el('addCodeBtn');
+    if (addCodeBtn) {
+      addCodeBtn.addEventListener('click', async () => {
+        try {
+          const data = await api('/api/admin/codes', {
+            method: 'POST',
+            body: JSON.stringify({
+              action: 'add',
+              role: el('newRole').value,
+              team: el('newTeam').value,
+              label: el('newLabel').value || 'Nouveau joueur'
+            })
+          });
+          toast(`Code ${data.code} créé.`, 'ok');
+          refreshState();
+        } catch (err) {
+          toast(err.message, 'error');
+        }
+      });
+    }
+
+    body.querySelectorAll('[data-rotate]').forEach((node) =>
+      node.addEventListener('click', async () => {
+        if (!confirm('Générer un nouveau code ? L\'appareil actuel sera déconnecté.')) return;
+        try {
+          const data = await api('/api/admin/codes', {
+            method: 'POST',
+            body: JSON.stringify({ action: 'rotate', code: node.dataset.rotate })
+          });
+          toast(`Nouveau code : ${data.code}`, 'ok');
+          refreshState();
+        } catch (err) {
+          toast(err.message, 'error');
+        }
+      })
+    );
+
+    body.querySelectorAll('[data-remove]').forEach((node) =>
+      node.addEventListener('click', async () => {
+        if (!confirm('Supprimer ce code définitivement ?')) return;
+        try {
+          await api('/api/admin/codes', {
+            method: 'POST',
+            body: JSON.stringify({ action: 'remove', code: node.dataset.remove })
+          });
+          refreshState();
+        } catch (err) {
+          toast(err.message, 'error');
+        }
+      })
+    );
+
+    const resetBtn = el('resetBtn');
+    if (resetBtn) {
+      resetBtn.addEventListener('click', async () => {
+        if (!confirm('Réinitialiser la partie ? Jokers, compteurs et journal sont effacés.')) return;
+        await api('/api/admin/reset', { method: 'POST' });
+        toast('Partie réinitialisée.', 'ok');
+      });
+    }
+
+    const pushBtn = el('pushBtn');
+    if (pushBtn) pushBtn.addEventListener('click', enablePush);
+
+    const logoutBtn = el('logoutBtn');
+    if (logoutBtn) {
+      logoutBtn.addEventListener('click', async () => {
+        await api('/api/logout', { method: 'POST' }).catch(() => {});
+        localStorage.removeItem('spymap.token');
+        location.replace('/');
+      });
+    }
+  }
+
+  async function refreshState() {
+    try {
+      snapshot = await api('/api/state');
+      serverOffset = snapshot.now - Date.now();
+      render(true);
+    } catch (err) {
+      /* le websocket rattrapera */
+    }
+  }
+
+  /* ----------------------------------------------------------------- boot */
+
+  el('sheetHandle').addEventListener('click', () => ui.sheet.classList.toggle('collapsed'));
+
+  ['pointerdown', 'pointerup', 'touchstart', 'touchend'].forEach((evt) =>
+    ui.sheetBody.addEventListener(
+      evt,
+      () => {
+        interactionUntil = Date.now() + 700;
+      },
+      { passive: true }
+    )
+  );
+
+  el('layersBtn').addEventListener('click', () => {
+    const basemap = gameMap.toggleBasemap();
+    el('layersBtn').classList.toggle('active', basemap.name !== 'dark');
+    toast(basemap.name === 'streets' ? 'Plan détaillé — commerces visibles' : basemap.label);
+  });
+
+  el('locateBtn').addEventListener('click', () => {
+    if (!myPosition) return toast('Pas encore de position GPS.', 'error');
+    gameMap.follow = true;
+    el('locateBtn').classList.add('active');
+    gameMap.centerOn(myPosition.lng, myPosition.lat, 17);
+  });
+
+  el('fitBtn').addEventListener('click', () => {
+    if (!snapshot || !snapshot.players.length) return toast('Personne sur la carte.', 'error');
+    gameMap.follow = false;
+    gameMap.fitAll(snapshot.players);
+  });
+
+  async function boot() {
+    config = await fetch('/api/config').then((r) => r.json());
+    document.title = config.appName || 'Traque';
+
+    gameMap = new GameMap('map', config, {
+      onFollowChange: (follow) => el('locateBtn').classList.toggle('active', follow),
+      onMarkerClick: () => {
+        activeTab = 'players';
+        ui.sheet.classList.remove('collapsed');
+        render(true);
+      }
+    });
+    if (gameMap.basemap !== 'dark') el('layersBtn').classList.add('active');
+
+    if (localStorage.getItem('spymap.role') === 'player') startTracking();
+
+    connect();
+    await refreshState();
+
+    if ('serviceWorker' in navigator) navigator.serviceWorker.register('/sw.js').catch(() => {});
+    setInterval(() => {
+      if (snapshot && !document.hidden) render();
+    }, 1000);
+  }
+
+  boot();
+})();

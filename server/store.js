@@ -1,0 +1,308 @@
+'use strict';
+
+const fs = require('fs');
+const path = require('path');
+const crypto = require('crypto');
+
+const DATA_DIR = process.env.DATA_DIR || path.join(__dirname, '..', 'data');
+const STATE_FILE = path.join(DATA_DIR, 'state.json');
+const CONFIG_DIR = path.join(__dirname, '..', 'config');
+
+const TEAMS = ['spy', 'spied'];
+
+/** Optional hand-written overrides: config/codes.json and config/jokers.json. */
+function readConfig(name) {
+  const file = path.join(CONFIG_DIR, name);
+  if (!fs.existsSync(file)) return null;
+  try {
+    return JSON.parse(fs.readFileSync(file, 'utf8'));
+  } catch (err) {
+    console.error(`[store] config/${name} is not valid JSON, ignoring it:`, err.message);
+    return null;
+  }
+}
+
+
+/**
+ * Joker decks, straight from the printed rule sheets.
+ *
+ * Espions (the runners): 2 shared jokers, each usable once, and each has to be
+ * UNLOCKED first by completing a challenge that the admin validates.
+ * Espionnes (the hunters): 2 jokers, usable once each, no unlock needed.
+ */
+function defaultJokers() {
+  const custom = readConfig('jokers.json');
+  if (custom && custom.spy && custom.spied) {
+    for (const team of TEAMS) {
+      custom[team] = custom[team].map((joker, index) =>
+        Object.assign(
+          {
+            id: `${team}_${index}`,
+            team,
+            icon: '★',
+            effect: 'notify',
+            durationSec: 60,
+            requiresUnlock: false,
+            unlocked: true,
+            usedAt: null
+          },
+          joker,
+          { team, usedAt: null, unlocked: !joker.requiresUnlock }
+        )
+      );
+    }
+    return custom;
+  }
+
+  return {
+    spy: [
+      {
+        id: 'spy_blindfold',
+        team: 'spy',
+        name: 'Yeux fermés',
+        icon: '🙈',
+        description:
+          'Les espionnés doivent se rendre à l’endroit que vous indiquez et fermer les yeux 30 secondes. Aucune poursuite pendant ces 30 secondes.',
+        unlockRequirement: 'Prendre une photo de tous les membres des espionnés sur la même photo.',
+        prompt: 'À quel endroit doivent-ils se rendre ?',
+        effect: 'freeze',
+        durationSec: 30,
+        alsoBlock: true,
+        requiresUnlock: true,
+        unlocked: false,
+        usedAt: null
+      },
+      {
+        id: 'spy_reset',
+        team: 'spy',
+        name: 'Défi annulé',
+        icon: '🔄',
+        description: 'Un défi des espionnés est réinitialisé et repasse en « non fait ».',
+        unlockRequirement: 'Réaliser vous-même le défi que vous voulez réinitialiser.',
+        prompt: 'Quel défi est réinitialisé ?',
+        effect: 'notify',
+        durationSec: 0,
+        requiresUnlock: true,
+        unlocked: false,
+        usedAt: null
+      }
+    ],
+    spied: [
+      {
+        id: 'spied_freeze',
+        team: 'spied',
+        name: 'Gel',
+        icon: '🧊',
+        description: 'Les deux espions doivent rester figés sur place pendant 2 minutes.',
+        unlockRequirement: null,
+        prompt: null,
+        effect: 'freeze',
+        durationSec: 120,
+        requiresUnlock: false,
+        unlocked: true,
+        usedAt: null
+      },
+      {
+        id: 'spied_locate',
+        team: 'spied',
+        name: 'Localisation 5 minutes',
+        icon: '📍',
+        description: 'Vous obtenez la position des espions en direct pendant 5 minutes.',
+        unlockRequirement: null,
+        prompt: null,
+        effect: 'reveal_opponents',
+        durationSec: 300,
+        requiresUnlock: false,
+        unlocked: true,
+        usedAt: null
+      }
+    ]
+  };
+}
+
+/** Round settings: who hunts whom, how long the round lasts, what it is called. */
+function defaultSettings() {
+  const custom = readConfig('game.json') || {};
+  return {
+    hunters: custom.hunters === 'spy' ? 'spy' : 'spied',
+    durationMin: Number(custom.durationMin) > 0 ? Number(custom.durationMin) : 300,
+    appName: process.env.APP_NAME || custom.appName || 'TRAQUE'
+  };
+}
+
+
+function randomCode(taken) {
+  let code;
+  do {
+    code = String(crypto.randomInt(10000, 100000));
+  } while (taken.has(code));
+  taken.add(code);
+  return code;
+}
+
+function normalizeCodes(raw, source) {
+  const valid = {};
+  for (const [code, entry] of Object.entries(raw)) {
+    if (!/^\d{5}$/.test(code)) {
+      console.error(`[store] ${source}: "${code}" n'est pas un code à 5 chiffres, ignoré.`);
+      continue;
+    }
+    const role = entry.role || 'player';
+    valid[code] = {
+      role,
+      team: role === 'player' ? (entry.team === 'spied' ? 'spied' : 'spy') : null,
+      label: entry.label || code
+    };
+  }
+  return valid;
+}
+
+/**
+ * ACCESS_CODES lets a host like Render hold the codes outside the repo and outside
+ * the (ephemeral) data dir: "11111:spy:Espion 1,55555:admin:Admin".
+ */
+function codesFromEnv() {
+  const raw = (process.env.ACCESS_CODES || '').trim();
+  if (!raw) return null;
+  const parsed = {};
+  for (const chunk of raw.split(',')) {
+    const [code, role, ...label] = chunk.split(':').map((x) => x.trim());
+    if (!code) continue;
+    const isTeam = role === 'spy' || role === 'spied';
+    parsed[code] = {
+      role: isTeam ? 'player' : role,
+      team: isTeam ? role : null,
+      label: label.join(':') || code
+    };
+  }
+  const valid = normalizeCodes(parsed, 'ACCESS_CODES');
+  return Object.keys(valid).length ? valid : null;
+}
+
+function defaultCodes() {
+  const fromEnv = codesFromEnv();
+  if (fromEnv) return fromEnv;
+
+  const custom = readConfig('codes.json');
+  if (custom && Object.keys(custom).length) {
+    const valid = normalizeCodes(custom, 'config/codes.json');
+    if (Object.keys(valid).length) return valid;
+  }
+
+  const taken = new Set();
+  const codes = {};
+  const add = (role, team, label) => {
+    codes[randomCode(taken)] = { role, team, label };
+  };
+  add('player', 'spy', 'Espion 1');
+  add('player', 'spy', 'Espion 2');
+  add('player', 'spied', 'Espionné 1');
+  add('player', 'spied', 'Espionné 2');
+  add('player', 'spied', 'Espionné 3');
+  add('admin', null, 'Maître du jeu');
+  add('viewer', null, 'Écran spectateur');
+  return codes;
+}
+
+function defaultState() {
+  const settings = defaultSettings();
+  return {
+    version: 2,
+    createdAt: Date.now(),
+    codes: defaultCodes(),
+    devices: {},
+    game: {
+      settings,
+      status: 'running',
+      startedAt: Date.now(),
+      endsAt: Date.now() + settings.durationMin * 60 * 1000,
+      // Per-team window during which that team can see the opposite team live.
+      reveals: { spy: { until: 0, grantedBy: null }, spied: { until: 0, grantedBy: null } },
+      // Per-team window during which that team CANNOT be granted any reveal.
+      blocks: { spy: { until: 0, reason: null }, spied: { until: 0, reason: null } },
+      // Frozen one-shot markers: [{id, team, forTeam, lat, lng, ts, label}]
+      pins: [],
+      // Timed constraints shown to a team: [{id, team, label, until}]
+      effects: [],
+      jokers: defaultJokers()
+    },
+    requests: [],
+    events: [],
+    push: { vapid: null, subs: {} }
+  };
+}
+
+function ensureShape(state) {
+  const base = defaultState();
+  const merged = Object.assign({}, base, state);
+  merged.game = Object.assign({}, base.game, state.game || {});
+  merged.game.reveals = Object.assign({}, base.game.reveals, (state.game || {}).reveals || {});
+  merged.game.blocks = Object.assign({}, base.game.blocks, (state.game || {}).blocks || {});
+  merged.game.jokers = (state.game || {}).jokers || base.game.jokers;
+  merged.game.settings = Object.assign({}, base.game.settings, (state.game || {}).settings || {});
+  merged.game.endsAt = (state.game || {}).endsAt || base.game.endsAt;
+  merged.game.pins = (state.game || {}).pins || [];
+  merged.game.effects = (state.game || {}).effects || [];
+  merged.push = Object.assign({}, base.push, state.push || {});
+  merged.codes = state.codes && Object.keys(state.codes).length ? state.codes : base.codes;
+  merged.devices = state.devices || {};
+  merged.requests = state.requests || [];
+  merged.events = state.events || [];
+  return merged;
+}
+
+let state = null;
+let saveTimer = null;
+
+function load() {
+  fs.mkdirSync(DATA_DIR, { recursive: true });
+  if (fs.existsSync(STATE_FILE)) {
+    try {
+      state = ensureShape(JSON.parse(fs.readFileSync(STATE_FILE, 'utf8')));
+    } catch (err) {
+      console.error('[store] state.json unreadable, starting fresh:', err.message);
+      state = defaultState();
+    }
+  } else {
+    state = defaultState();
+  }
+  save(true);
+  return state;
+}
+
+function save(immediate) {
+  if (immediate) {
+    clearTimeout(saveTimer);
+    saveTimer = null;
+    fs.mkdirSync(DATA_DIR, { recursive: true });
+    fs.writeFileSync(STATE_FILE, JSON.stringify(state, null, 2));
+    return;
+  }
+  if (saveTimer) return;
+  saveTimer = setTimeout(() => {
+    saveTimer = null;
+    try {
+      fs.writeFileSync(STATE_FILE, JSON.stringify(state, null, 2));
+    } catch (err) {
+      console.error('[store] save failed:', err.message);
+    }
+  }, 500);
+}
+
+function get() {
+  if (!state) load();
+  return state;
+}
+
+/** Wipe the round, keep the codes and the signed-in devices. */
+function resetGame() {
+  const s = get();
+  const fresh = defaultState();
+  s.game = fresh.game;
+  s.requests = [];
+  s.events = [];
+  save(true);
+  return s;
+}
+
+module.exports = { get, load, save, resetGame, defaultState, defaultJokers, randomCode, TEAMS, DATA_DIR };
