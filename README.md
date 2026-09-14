@@ -147,8 +147,10 @@ pour la liste des effets disponibles.
 ## Notifications sur téléphone
 
 Chaque alerte s'affiche dans l'app avec un son et une vibration. Pour recevoir aussi les
-alertes **téléphone verrouillé**, appuyez sur *Activer les notifications* dans
-l'onglet Contrôle :
+alertes **téléphone verrouillé**, appuyez sur *Activer les notifications* : les joueurs
+le trouvent tout en bas de l'onglet **Carte**, le maître du jeu dans **Contrôle** et le
+spectateur dans **Résumé**, sur la carte « Cet appareil » (même endroit que la
+déconnexion).
 
 - **Android** : fonctionne directement dans Chrome.
 - **iPhone** : Safari → Partager → *Sur l'écran d'accueil*, ouvrir l'app depuis l'icône,

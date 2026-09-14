@@ -440,6 +440,8 @@
         .join('');
     }
 
+    if (isPlayer) html += deviceCard();
+
     return html;
   }
 
@@ -684,14 +686,21 @@
         : '<div class="empty">En attente des deux équipes.</div>';
     }
 
-    html += `<div class="section-label">Cet appareil</div>
+    html += deviceCard();
+    return html;
+  }
+
+  /** Notifications + déconnexion : visible pour tous les rôles, joueurs compris. */
+  function deviceCard() {
+    const roleLabel = { player: 'joueur', admin: 'maître du jeu', viewer: 'spectateur' };
+    const pushOn = 'Notification' in window && Notification.permission === 'granted';
+    return `<div class="section-label">Cet appareil</div>
       <div class="card"><div class="card-title">${escapeHtml(snapshot.me.label)}</div>
-      <div class="card-sub">Code ${escapeHtml(snapshot.me.code)} · ${snapshot.me.role}</div>
+      <div class="card-sub">Code ${escapeHtml(snapshot.me.code)} · ${roleLabel[snapshot.me.role] || snapshot.me.role}</div>
       <div class="card-actions">
-        <button class="btn ghost small" id="pushBtn">Activer les notifications</button>
+        <button class="btn ghost small" id="pushBtn">${pushOn ? 'Notifications activées' : 'Activer les notifications'}</button>
         <button class="btn danger small" id="logoutBtn">Se déconnecter</button>
       </div></div>`;
-    return html;
   }
 
   function renderCodesPanel() {
