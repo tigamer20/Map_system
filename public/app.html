@@ -1,0 +1,61 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, maximum-scale=1, user-scalable=no" />
+  <meta name="theme-color" content="#080b12" />
+  <meta name="apple-mobile-web-app-capable" content="yes" />
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+  <title>Spy Map</title>
+  <link rel="manifest" href="/manifest.webmanifest" />
+  <link rel="icon" href="/icons/icon.svg" type="image/svg+xml" />
+  <link rel="apple-touch-icon" href="/icons/icon.svg" />
+  <link rel="stylesheet" href="/vendor/maplibre/maplibre-gl.css" />
+  <link rel="stylesheet" href="/css/style.css" />
+</head>
+<body>
+  <div class="app" id="app">
+    <div id="map"></div>
+
+    <header class="topbar">
+      <div class="chip" id="roleChip"><span class="dot"></span><span id="roleText">…</span></div>
+      <div class="chip" id="statusChip" hidden><span id="statusText"></span></div>
+      <div class="spacer"></div>
+      <button class="icon-btn" id="layersBtn" title="Switch basemap" aria-label="Switch basemap">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+          <path d="m12 3 9 5-9 5-9-5 9-5Z" /><path d="m3 13 9 5 9-5" />
+        </svg>
+      </button>
+      <button class="icon-btn" id="fitBtn" title="Fit everyone" aria-label="Fit everyone">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+          <path d="M4 9V5a1 1 0 0 1 1-1h4M20 9V5a1 1 0 0 0-1-1h-4M4 15v4a1 1 0 0 0 1 1h4M20 15v4a1 1 0 0 1-1 1h-4" />
+        </svg>
+      </button>
+      <button class="icon-btn" id="locateBtn" title="Center on me" aria-label="Center on me">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+          <circle cx="12" cy="12" r="3.2" /><path d="M12 2v3M12 19v3M2 12h3M19 12h3" />
+        </svg>
+      </button>
+    </header>
+
+    <section class="sheet collapsed" id="sheet">
+      <div class="sheet-handle" id="sheetHandle"><span></span></div>
+      <nav class="tabs" id="tabs"></nav>
+      <div class="sheet-body" id="sheetBody"></div>
+    </section>
+  </div>
+
+  <div class="toast-layer" id="toasts"></div>
+
+  <div class="alert-layer" id="alertLayer" hidden>
+    <div class="alert-box">
+      <div class="icon" id="alertIcon">!</div>
+      <h3 id="alertTitle"></h3>
+      <p id="alertBody"></p>
+      <button class="btn" id="alertDismiss">Got it</button>
+    </div>
+  </div>
+
+  <script type="module" src="/js/boot.js"></script>
+</body>
+</html>

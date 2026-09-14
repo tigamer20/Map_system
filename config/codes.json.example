@@ -1,0 +1,8 @@
+{
+  "11111": { "role": "player", "team": "spy",   "label": "Spy 1" },
+  "22222": { "role": "player", "team": "spy",   "label": "Spy 2" },
+  "33333": { "role": "player", "team": "spied", "label": "Spied 1" },
+  "44444": { "role": "player", "team": "spied", "label": "Spied 2" },
+  "55555": { "role": "admin",  "label": "Game master" },
+  "66666": { "role": "viewer", "label": "Viewer screen" }
+}

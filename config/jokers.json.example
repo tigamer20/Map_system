@@ -1,0 +1,46 @@
+{
+  "spy": [
+    {
+      "id": "spy_satellite",
+      "name": "Satellite Ping",
+      "icon": "S",
+      "requirement": "The whole spy team must be together at a bus stop or metro station.",
+      "effect": "snapshot_pin",
+      "effectLabel": "Drops a pin with the exact position of every spied player, right now.",
+      "durationMin": 0,
+      "requiresApproval": true
+    },
+    {
+      "id": "spy_roadblock",
+      "name": "Roadblock",
+      "icon": "R",
+      "requirement": "Name out loud the district you believe the spied team is hiding in.",
+      "effect": "freeze",
+      "effectLabel": "The spied team must stay where they are for 10 minutes.",
+      "durationMin": 10,
+      "requiresApproval": true
+    }
+  ],
+  "spied": [
+    {
+      "id": "spied_smoke",
+      "name": "Smoke Screen",
+      "icon": "X",
+      "requirement": "Send the admin a photo of the street sign next to you.",
+      "effect": "block_reveal",
+      "effectLabel": "The spies cannot get any location access for 15 minutes.",
+      "durationMin": 15,
+      "requiresApproval": true
+    },
+    {
+      "id": "spied_counter",
+      "name": "Counter-Intel",
+      "icon": "C",
+      "requirement": "Answer correctly the trivia question asked by the admin.",
+      "effect": "reveal_opponents",
+      "effectLabel": "The spied team sees every spy on the map for 3 minutes.",
+      "durationMin": 3,
+      "requiresApproval": true
+    }
+  ]
+}
