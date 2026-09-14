@@ -10,9 +10,13 @@ const POSITION_STALE_MS = 5 * 60 * 1000;
 const positions = new Map();
 
 const otherTeam = (team) => (team === 'spy' ? 'spied' : 'spy');
-const teamName = (team) => (team === 'spy' ? 'Spies' : 'Spied');
+const teamName = (team) => (team === 'spy' ? 'Espions' : 'Espionnés');
 const id = () => crypto.randomBytes(8).toString('hex');
 const now = () => Date.now();
+
+const settings = () => store.get().game.settings;
+/** The hunters are the team allowed to ask for the other team's position. */
+const isHunter = (team) => settings().hunters === team;
 
 /* ------------------------------------------------------------------ events */
 
@@ -39,7 +43,7 @@ function setPosition(code, pos) {
   const s = store.get();
   const entry = s.codes[code];
   if (!entry || entry.role !== 'player') return null;
-  const record = {
+  positions.set(code, {
     code,
     name: entry.label,
     team: entry.team,
@@ -48,20 +52,14 @@ function setPosition(code, pos) {
     accuracy: pos.accuracy == null ? null : pos.accuracy,
     heading: pos.heading == null ? null : pos.heading,
     speed: pos.speed == null ? null : pos.speed,
-    battery: pos.battery == null ? null : pos.battery,
     ts: now()
-  };
-  positions.set(code, record);
-  return record;
+  });
+  return positions.get(code);
 }
 
 function allPositions() {
-  const list = [];
   const cutoff = now() - POSITION_STALE_MS;
-  for (const p of positions.values()) {
-    list.push(Object.assign({}, p, { stale: p.ts < cutoff }));
-  }
-  return list;
+  return Array.from(positions.values()).map((p) => Object.assign({}, p, { stale: p.ts < cutoff }));
 }
 
 /* -------------------------------------------------------------- visibility */
@@ -75,18 +73,14 @@ function canSeeOpponents(team) {
   return g.reveals[team].until > now() && !isBlocked(team);
 }
 
-/** What a given viewer is allowed to see on the map. */
 function visibleFor(session) {
-  const everything = session.role === 'admin' || session.role === 'viewer';
-  const s = store.get();
   const list = allPositions();
-  if (everything) return list;
+  if (session.role === 'admin' || session.role === 'viewer') return list;
 
-  const team = session.team;
-  const seeOthers = canSeeOpponents(team);
+  const seeOthers = canSeeOpponents(session.team);
   return list
-    .filter((p) => p.team === team || seeOthers)
-    .map((p) => (p.team === team ? p : Object.assign({}, p, { revealed: true })));
+    .filter((p) => p.team === session.team || seeOthers)
+    .map((p) => (p.team === session.team ? p : Object.assign({}, p, { revealed: true })));
 }
 
 function visiblePins(session) {
@@ -121,29 +115,36 @@ function visibleEffects(session) {
 
 /* ---------------------------------------------------------------- requests */
 
+function findJoker(team, jokerId) {
+  return (store.get().game.jokers[team] || []).find((j) => j.id === jokerId);
+}
+
+/**
+ * Two kinds of demand reach the admin:
+ *  - 'location': the hunters ask to see the other team.
+ *  - 'unlock'  : a team asks to unlock a joker after doing its challenge.
+ */
 function createRequest(session, type, payload = {}) {
   const s = store.get();
-  if (session.role !== 'player') throw new Error('Only players can send requests.');
+  if (session.role !== 'player') throw new Error('Seuls les joueurs peuvent envoyer une demande.');
 
   if (type === 'location') {
-    if (isBlocked(session.team)) {
-      throw new Error('Your team is jammed right now. Location requests are blocked.');
+    if (!isHunter(session.team)) throw new Error("Votre équipe ne traque pas, elle est traquée.");
+    if (isBlocked(session.team)) throw new Error('Vos demandes sont bloquées pour le moment.');
+    if (s.requests.some((r) => r.status === 'pending' && r.type === 'location' && r.team === session.team)) {
+      throw new Error('Une demande de votre équipe attend déjà le maître du jeu.');
     }
-    const pending = s.requests.find(
-      (r) => r.status === 'pending' && r.type === 'location' && r.team === session.team
-    );
-    if (pending) throw new Error('A location request from your team is already waiting for the admin.');
   }
 
   let joker = null;
-  if (type === 'joker') {
-    joker = (s.game.jokers[session.team] || []).find((j) => j.id === payload.jokerId);
-    if (!joker) throw new Error('Unknown joker.');
-    if (joker.usedAt) throw new Error('That joker has already been used.');
-    const pending = s.requests.find(
-      (r) => r.status === 'pending' && r.type === 'joker' && r.payload.jokerId === joker.id
-    );
-    if (pending) throw new Error('That joker is already waiting for admin approval.');
+  if (type === 'unlock') {
+    joker = findJoker(session.team, payload.jokerId);
+    if (!joker) throw new Error('Joker inconnu.');
+    if (joker.unlocked) throw new Error('Ce joker est déjà débloqué.');
+    if (joker.usedAt) throw new Error('Ce joker a déjà été utilisé.');
+    if (s.requests.some((r) => r.status === 'pending' && r.type === 'unlock' && r.payload.jokerId === joker.id)) {
+      throw new Error('Ce déblocage attend déjà une validation.');
+    }
   }
 
   const request = {
@@ -160,33 +161,24 @@ function createRequest(session, type, payload = {}) {
     note: null
   };
   s.requests.unshift(request);
-
-  // A joker marked requiresApproval:false fires straight away, no admin in the loop.
-  if (joker && joker.requiresApproval === false) {
-    request.status = 'approved';
-    request.decidedAt = now();
-    request.decidedBy = 'auto';
-    store.save();
-    return { request, notify: playJoker(session.team, joker.id) };
-  }
-
   store.save();
+
   addEvent(
     'request',
-    type === 'joker'
-      ? `${teamName(session.team)} asked to play "${joker.name}"`
-      : `${teamName(session.team)} asked for a location reveal`,
+    type === 'unlock'
+      ? `${teamName(session.team)} demandent à débloquer « ${joker.name} »`
+      : `${teamName(session.team)} demandent une localisation`,
     { team: session.team, scope: 'team' }
   );
-  return { request, notify: [] };
+  return request;
 }
 
 /** Admin decision. Returns {request, notify:[{team, title, body, kind}]} */
 function decideRequest(requestId, approve, options = {}) {
   const s = store.get();
   const request = s.requests.find((r) => r.id === requestId);
-  if (!request) throw new Error('Request not found.');
-  if (request.status !== 'pending') throw new Error('That request was already handled.');
+  if (!request) throw new Error('Demande introuvable.');
+  if (request.status !== 'pending') throw new Error('Cette demande a déjà été traitée.');
 
   request.status = approve ? 'approved' : 'denied';
   request.decidedAt = now();
@@ -196,14 +188,14 @@ function decideRequest(requestId, approve, options = {}) {
   const notify = [];
 
   if (!approve) {
-    addEvent('denied', `Admin denied a request from the ${teamName(request.team)}`, {
+    addEvent('denied', `Demande des ${teamName(request.team).toLowerCase()} refusée`, {
       team: request.team,
       scope: 'team'
     });
     notify.push({
       team: request.team,
-      title: 'Request denied',
-      body: options.note || 'The admin turned down your request.',
+      title: 'Demande refusée',
+      body: options.note || 'Le maître du jeu a refusé votre demande.',
       kind: 'denied'
     });
     store.save();
@@ -214,29 +206,41 @@ function decideRequest(requestId, approve, options = {}) {
     const minutes = Number(options.minutes || request.payload.minutes || 3);
     const mode = options.mode || request.payload.mode || 'live';
     if (mode === 'snapshot') {
-      notify.push(...dropSnapshotPins(request.team, minutes));
+      notify.push(...dropSnapshotPins(request.team, 30));
     } else {
       grantReveal(request.team, minutes);
       notify.push({
         team: otherTeam(request.team),
-        title: 'You are exposed',
-        body: `The ${teamName(request.team).toLowerCase()} can see your live location for ${minutes} min.`,
+        title: 'Vous êtes repérés',
+        body: `Les ${teamName(request.team).toLowerCase()} voient votre position en direct pendant ${minutes} min.`,
         kind: 'exposed'
       });
     }
     notify.push({
       team: request.team,
-      title: 'Access granted',
+      title: 'Localisation accordée',
       body:
         mode === 'snapshot'
-          ? 'A snapshot pin of the other team just landed on your map.'
-          : `Live location unlocked for ${minutes} minutes.`,
+          ? 'Un point figé vient d’apparaître sur votre carte.'
+          : `Suivi en direct pendant ${minutes} minutes.`,
       kind: 'granted'
     });
   }
 
-  if (request.type === 'joker') {
-    notify.push(...playJoker(request.team, request.payload.jokerId, options));
+  if (request.type === 'unlock') {
+    const joker = findJoker(request.team, request.payload.jokerId);
+    if (joker) {
+      joker.unlocked = true;
+      addEvent('joker', `« ${joker.name} » est débloqué pour les ${teamName(request.team).toLowerCase()}`, {
+        scope: 'all'
+      });
+      notify.push({
+        team: request.team,
+        title: `${joker.name} débloqué`,
+        body: 'Le défi est validé. Vous pouvez jouer ce joker quand vous voulez.',
+        kind: 'granted'
+      });
+    }
   }
 
   store.save();
@@ -247,10 +251,10 @@ function decideRequest(requestId, approve, options = {}) {
 
 function grantReveal(team, minutes) {
   const s = store.get();
-  if (isBlocked(team)) throw new Error('That team is jammed and cannot receive a reveal.');
+  if (isBlocked(team)) throw new Error('Cette équipe est bloquée, impossible de lui donner un accès.');
   const until = Math.max(s.game.reveals[team].until, now() + minutes * 60 * 1000);
   s.game.reveals[team] = { until, grantedBy: 'admin' };
-  addEvent('reveal', `${teamName(team)} unlocked live tracking for ${minutes} min`, { scope: 'all' });
+  addEvent('reveal', `${teamName(team)} : suivi en direct pendant ${minutes} min`, { scope: 'all' });
   store.save();
   return until;
 }
@@ -258,14 +262,13 @@ function grantReveal(team, minutes) {
 function revokeReveal(team) {
   const s = store.get();
   s.game.reveals[team] = { until: 0, grantedBy: null };
-  addEvent('reveal', `${teamName(team)} lost live tracking`, { scope: 'all' });
+  addEvent('reveal', `${teamName(team)} : suivi coupé`, { scope: 'all' });
   store.save();
 }
 
 function dropSnapshotPins(forTeam, minutesVisible = 30) {
   const s = store.get();
   const target = otherTeam(forTeam);
-  const notify = [];
   let count = 0;
   for (const p of positions.values()) {
     if (p.team !== target) continue;
@@ -281,27 +284,50 @@ function dropSnapshotPins(forTeam, minutesVisible = 30) {
     });
     count += 1;
   }
-  addEvent('pin', `${count} snapshot pin(s) dropped for the ${teamName(forTeam).toLowerCase()}`, {
+  addEvent('pin', `${count} position(s) figée(s) envoyée(s) aux ${teamName(forTeam).toLowerCase()}`, {
     scope: 'all'
   });
-  notify.push({
-    team: target,
-    title: 'Position leaked',
-    body: 'Your exact position at this moment was just pinned on the enemy map.',
-    kind: 'exposed'
-  });
   store.save();
-  return notify;
+  return [
+    {
+      team: target,
+      title: 'Position envoyée',
+      body: 'Votre position exacte vient d’être transmise à l’autre équipe.',
+      kind: 'exposed'
+    }
+  ];
 }
 
+function freezeTeam(team, seconds, label) {
+  const s = store.get();
+  s.game.effects.push({
+    id: id(),
+    team,
+    label: label || 'Restez sur place',
+    until: now() + seconds * 1000
+  });
+  store.save();
+}
+
+/** Play a joker. `detail` is the free-text the rules ask the player for. */
 function playJoker(team, jokerId, options = {}) {
   const s = store.get();
-  const joker = (s.game.jokers[team] || []).find((j) => j.id === jokerId);
-  if (!joker) throw new Error('Unknown joker.');
-  if (joker.usedAt) throw new Error('That joker has already been used.');
+  const joker = findJoker(team, jokerId);
+  if (!joker) throw new Error('Joker inconnu.');
+  if (joker.usedAt) throw new Error('Ce joker a déjà été utilisé.');
+  if (joker.requiresUnlock && !joker.unlocked) throw new Error('Ce joker doit d’abord être débloqué.');
+
+  const detail = String(options.detail || '').slice(0, 160).trim();
+  if (joker.prompt && !detail) throw new Error('Précisez votre joker avant de le jouer.');
+  const grantsReveal = joker.effect === 'reveal_opponents' || joker.effect === 'reveal_live';
+  if (grantsReveal && isBlocked(team)) {
+    throw new Error('Votre équipe est bloquée : gardez ce joker pour plus tard.');
+  }
 
   joker.usedAt = now();
-  const minutes = Number(options.minutes || joker.durationMin || 0);
+  joker.detail = detail || null;
+
+  const seconds = Number(joker.durationSec || (joker.durationMin || 0) * 60);
   const target = otherTeam(team);
   const notify = [];
 
@@ -310,43 +336,41 @@ function playJoker(team, jokerId, options = {}) {
       notify.push(...dropSnapshotPins(team, 30));
       break;
     case 'reveal_live':
-      grantReveal(team, minutes || 3);
-      break;
     case 'reveal_opponents':
-      grantReveal(team, minutes || 3);
+      grantReveal(team, Math.max(1, Math.round(seconds / 60)));
       break;
     case 'block_reveal': {
-      const until = now() + (minutes || 10) * 60 * 1000;
-      s.game.blocks[target] = { until, reason: joker.name };
+      s.game.blocks[target] = { until: now() + seconds * 1000, reason: joker.name };
       s.game.reveals[target] = { until: 0, grantedBy: null };
       break;
     }
-    case 'freeze': {
-      s.game.effects.push({
-        id: id(),
-        team: target,
-        label: `Frozen by "${joker.name}" — stay where you are`,
-        until: now() + (minutes || 5) * 60 * 1000
-      });
+    case 'freeze':
+      freezeTeam(target, seconds, `${joker.name} — ${detail || joker.description}`);
+      if (joker.alsoBlock) {
+        s.game.blocks[target] = { until: now() + seconds * 1000, reason: joker.name };
+        s.game.reveals[target] = { until: 0, grantedBy: null };
+      }
       break;
-    }
+    case 'notify':
     default:
       break;
   }
 
-  addEvent('joker', `${teamName(team)} played "${joker.name}"`, { scope: 'all' });
+  addEvent('joker', `${teamName(team)} jouent « ${joker.name} »${detail ? ` : ${detail}` : ''}`, {
+    scope: 'all'
+  });
 
   notify.push({
     team: target,
-    title: `Joker played: ${joker.name}`,
-    body: `The ${teamName(team).toLowerCase()} played ${joker.name}. ${joker.effectLabel}`,
+    title: `Joker : ${joker.name}`,
+    body: detail ? `${joker.description} (${detail})` : joker.description,
     kind: 'joker',
     loud: true
   });
   notify.push({
     team,
-    title: `${joker.name} is live`,
-    body: joker.effectLabel,
+    title: `${joker.name} est actif`,
+    body: joker.description,
     kind: 'joker'
   });
 
@@ -354,21 +378,46 @@ function playJoker(team, jokerId, options = {}) {
   return notify;
 }
 
+/* ------------------------------------------------------------------- clock */
+
+function startClock(minutes) {
+  const s = store.get();
+  const duration = Number(minutes) > 0 ? Number(minutes) : s.game.settings.durationMin;
+  s.game.settings.durationMin = duration;
+  s.game.status = 'running';
+  s.game.startedAt = now();
+  s.game.endsAt = now() + duration * 60 * 1000;
+  addEvent('clock', `La partie démarre pour ${Math.round(duration / 60)} h`, { scope: 'all' });
+  store.save();
+}
+
+function stopClock() {
+  const s = store.get();
+  s.game.status = 'ended';
+  s.game.endsAt = now();
+  addEvent('clock', 'La partie est terminée', { scope: 'all' });
+  store.save();
+}
+
 /* -------------------------------------------------------------- snapshots */
 
 function snapshotFor(session) {
   const s = store.get();
+  const hunters = s.game.settings.hunters;
   const base = {
     now: now(),
     me: {
       code: session.code,
       role: session.role,
       team: session.team,
-      label: session.label
+      label: session.label,
+      isHunter: session.role === 'player' ? session.team === hunters : false
     },
     game: {
       status: s.game.status,
       startedAt: s.game.startedAt,
+      endsAt: s.game.endsAt,
+      settings: s.game.settings,
       reveals: s.game.reveals,
       blocks: s.game.blocks
     },
@@ -394,7 +443,7 @@ function snapshotFor(session) {
         role: c.role,
         team: c.team,
         label: c.label,
-        online: positions.has(code) ? now() - (positions.get(code) || {}).ts < POSITION_STALE_MS : false
+        online: positions.has(code) ? now() - positions.get(code).ts < POSITION_STALE_MS : false
       }))
       .sort(
         (a, b) =>
@@ -417,9 +466,13 @@ module.exports = {
   grantReveal,
   revokeReveal,
   dropSnapshotPins,
+  freezeTeam,
   playJoker,
+  startClock,
+  stopClock,
   canSeeOpponents,
   isBlocked,
+  isHunter,
   addEvent,
   otherTeam,
   teamName

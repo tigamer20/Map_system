@@ -1,12 +1,12 @@
 {
-  "name": "Spy Map",
-  "short_name": "Spy Map",
+  "name": "Traque",
+  "short_name": "Traque",
   "start_url": "/app",
   "scope": "/",
   "display": "standalone",
   "orientation": "portrait",
-  "background_color": "#080b12",
-  "theme_color": "#080b12",
+  "background_color": "#0f1116",
+  "theme_color": "#0f1116",
   "icons": [
     { "src": "/icons/icon.svg", "sizes": "any", "type": "image/svg+xml", "purpose": "any" },
     { "src": "/icons/icon-maskable.svg", "sizes": "any", "type": "image/svg+xml", "purpose": "maskable" }

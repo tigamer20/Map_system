@@ -16,7 +16,7 @@
         base: { type: 'raster', tiles, tileSize: 256, attribution, maxzoom: 19 }
       },
       layers: [
-        { id: 'bg', type: 'background', paint: { 'background-color': '#0d1117' } },
+        { id: 'bg', type: 'background', paint: { 'background-color': '#14171d' } },
         { id: 'base', type: 'raster', source: 'base' }
       ]
     };
@@ -32,13 +32,27 @@
     return style;
   }
 
-  /** Streets basemap: MapTiler vector when a key is configured, CARTO Voyager otherwise. */
+  /** Plan détaillé (commerces visibles) — MapTiler si une clé est fournie. */
   function streetsStyle(config) {
     if (config.mapTilerKey) {
       return `https://api.maptiler.com/maps/streets-v2/style.json?key=${config.mapTilerKey}`;
     }
     const ratio = window.devicePixelRatio > 1.4 ? '@2x' : '';
     return rasterStyle(CARTO.map((t) => t.replace('{ratio}', ratio)), ATTRIB_OSM);
+  }
+
+  /** Plan sombre, assorti à l'interface. */
+  function darkStyle(config) {
+    if (config.mapTilerKey) {
+      return `https://api.maptiler.com/maps/streets-v2-dark/style.json?key=${config.mapTilerKey}`;
+    }
+    const ratio = window.devicePixelRatio > 1.4 ? '@2x' : '';
+    return rasterStyle(
+      ['a', 'b', 'c', 'd'].map(
+        (sub) => `https://${sub}.basemaps.cartocdn.com/rastertiles/dark_matter/{z}/{x}/{y}${ratio}.png`
+      ),
+      ATTRIB_OSM
+    );
   }
 
   function satelliteStyle() {
@@ -48,6 +62,14 @@
       { tiles: ['https://basemaps.cartocdn.com/rastertiles/dark_only_labels/{z}/{x}/{y}.png'] }
     );
   }
+
+  const BASEMAPS = [
+    { name: 'dark', label: 'Plan sombre', build: darkStyle },
+    { name: 'streets', label: 'Plan détaillé', build: streetsStyle },
+    { name: 'satellite', label: 'Satellite', build: satelliteStyle }
+  ];
+
+  const basemapByName = (name) => BASEMAPS.find((b) => b.name === name) || BASEMAPS[0];
 
   function circlePolygon(lng, lat, meters, points) {
     const coords = [];
@@ -70,7 +92,7 @@
   function GameMap(container, config, options) {
     const opts = options || {};
     this.config = config;
-    this.basemap = localStorage.getItem('spymap.basemap') || 'streets';
+    this.basemap = basemapByName(localStorage.getItem('spymap.basemap') || 'dark').name;
     this.markers = new Map();
     this.pinMarkers = new Map();
     this.follow = true;
@@ -79,7 +101,7 @@
 
     this.map = new maplibregl.Map({
       container,
-      style: this.basemap === 'satellite' ? satelliteStyle() : streetsStyle(config),
+      style: basemapByName(this.basemap).build(config),
       center: [2.3522, 48.8566],
       zoom: 12,
       attributionControl: { compact: true },
@@ -107,30 +129,33 @@
       id: 'accuracy-fill',
       type: 'fill',
       source: 'accuracy',
-      paint: { 'fill-color': '#35d0e0', 'fill-opacity': 0.12 }
+      paint: { 'fill-color': '#7c8cff', 'fill-opacity': 0.14 }
     });
     this.map.addLayer({
       id: 'accuracy-line',
       type: 'line',
       source: 'accuracy',
-      paint: { 'line-color': '#35d0e0', 'line-opacity': 0.4, 'line-width': 1 }
+      paint: { 'line-color': '#7c8cff', 'line-opacity': 0.45, 'line-width': 1 }
     });
   };
 
   GameMap.prototype.setBasemap = function (name) {
-    this.basemap = name;
-    localStorage.setItem('spymap.basemap', name);
-    const style = name === 'satellite' ? satelliteStyle() : streetsStyle(this.config);
-    this.map.setStyle(style);
+    const basemap = basemapByName(name);
+    this.basemap = basemap.name;
+    localStorage.setItem('spymap.basemap', basemap.name);
+    this.map.setStyle(basemap.build(this.config));
     this.map.once('styledata', () => {
       this.ready = true;
       this._addHalo();
     });
   };
 
+  /** Enchaîne plan sombre → plan détaillé → satellite. */
   GameMap.prototype.toggleBasemap = function () {
-    this.setBasemap(this.basemap === 'satellite' ? 'streets' : 'satellite');
-    return this.basemap;
+    const index = BASEMAPS.findIndex((b) => b.name === this.basemap);
+    const next = BASEMAPS[(index + 1) % BASEMAPS.length];
+    this.setBasemap(next.name);
+    return next;
   };
 
   GameMap.prototype._element = function (player, myCode) {

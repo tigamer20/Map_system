@@ -23,76 +23,113 @@ function readConfig(name) {
 }
 
 
-/** Default joker deck: 2 per team, each with a requirement the admin validates. */
+/**
+ * Joker decks, straight from the printed rule sheets.
+ *
+ * Espions (the runners): 2 shared jokers, each usable once, and each has to be
+ * UNLOCKED first by completing a challenge that the admin validates.
+ * Espionnes (the hunters): 2 jokers, usable once each, no unlock needed.
+ */
 function defaultJokers() {
   const custom = readConfig('jokers.json');
   if (custom && custom.spy && custom.spied) {
     for (const team of TEAMS) {
       custom[team] = custom[team].map((joker, index) =>
         Object.assign(
-          { id: `${team}_${index}`, team, icon: '*', durationMin: 5, effect: 'freeze', requiresApproval: true, usedAt: null },
+          {
+            id: `${team}_${index}`,
+            team,
+            icon: '★',
+            effect: 'notify',
+            durationSec: 60,
+            requiresUnlock: false,
+            unlocked: true,
+            usedAt: null
+          },
           joker,
-          { team, usedAt: null }
+          { team, usedAt: null, unlocked: !joker.requiresUnlock }
         )
       );
     }
     return custom;
   }
+
   return {
     spy: [
       {
-        id: 'spy_satellite',
+        id: 'spy_blindfold',
         team: 'spy',
-        name: 'Satellite Ping',
-        icon: 'S',
-        requirement: 'The whole spy team must be together at a bus stop or metro station.',
-        effect: 'snapshot_pin',
-        effectLabel: 'Drops a pin with the exact position of every spied player, right now.',
-        durationMin: 0,
-        requiresApproval: true,
+        name: 'Yeux fermés',
+        icon: '🙈',
+        description:
+          'Les espionnés doivent se rendre à l’endroit que vous indiquez et fermer les yeux 30 secondes. Aucune poursuite pendant ces 30 secondes.',
+        unlockRequirement: 'Prendre une photo de tous les membres des espionnés sur la même photo.',
+        prompt: 'À quel endroit doivent-ils se rendre ?',
+        effect: 'freeze',
+        durationSec: 30,
+        alsoBlock: true,
+        requiresUnlock: true,
+        unlocked: false,
         usedAt: null
       },
       {
-        id: 'spy_roadblock',
+        id: 'spy_reset',
         team: 'spy',
-        name: 'Roadblock',
-        icon: 'R',
-        requirement: 'Name out loud the district you believe the spied team is hiding in.',
-        effect: 'freeze',
-        effectLabel: 'The spied team must stay where they are for 10 minutes.',
-        durationMin: 10,
-        requiresApproval: true,
+        name: 'Défi annulé',
+        icon: '🔄',
+        description: 'Un défi des espionnés est réinitialisé et repasse en « non fait ».',
+        unlockRequirement: 'Réaliser vous-même le défi que vous voulez réinitialiser.',
+        prompt: 'Quel défi est réinitialisé ?',
+        effect: 'notify',
+        durationSec: 0,
+        requiresUnlock: true,
+        unlocked: false,
         usedAt: null
       }
     ],
     spied: [
       {
-        id: 'spied_smoke',
+        id: 'spied_freeze',
         team: 'spied',
-        name: 'Smoke Screen',
-        icon: 'X',
-        requirement: 'Send the admin a photo of the street sign next to you.',
-        effect: 'block_reveal',
-        effectLabel: 'The spies cannot get any location access for 15 minutes.',
-        durationMin: 15,
-        requiresApproval: true,
+        name: 'Gel',
+        icon: '🧊',
+        description: 'Les deux espions doivent rester figés sur place pendant 2 minutes.',
+        unlockRequirement: null,
+        prompt: null,
+        effect: 'freeze',
+        durationSec: 120,
+        requiresUnlock: false,
+        unlocked: true,
         usedAt: null
       },
       {
-        id: 'spied_counter',
+        id: 'spied_locate',
         team: 'spied',
-        name: 'Counter-Intel',
-        icon: 'C',
-        requirement: 'Answer correctly the trivia question asked by the admin.',
+        name: 'Localisation 5 minutes',
+        icon: '📍',
+        description: 'Vous obtenez la position des espions en direct pendant 5 minutes.',
+        unlockRequirement: null,
+        prompt: null,
         effect: 'reveal_opponents',
-        effectLabel: 'The spied team sees every spy on the map for 3 minutes.',
-        durationMin: 3,
-        requiresApproval: true,
+        durationSec: 300,
+        requiresUnlock: false,
+        unlocked: true,
         usedAt: null
       }
     ]
   };
 }
+
+/** Round settings: who hunts whom, how long the round lasts, what it is called. */
+function defaultSettings() {
+  const custom = readConfig('game.json') || {};
+  return {
+    hunters: custom.hunters === 'spy' ? 'spy' : 'spied',
+    durationMin: Number(custom.durationMin) > 0 ? Number(custom.durationMin) : 300,
+    appName: process.env.APP_NAME || custom.appName || 'TRAQUE'
+  };
+}
+
 
 function randomCode(taken) {
   let code;
@@ -103,48 +140,82 @@ function randomCode(taken) {
   return code;
 }
 
+function normalizeCodes(raw, source) {
+  const valid = {};
+  for (const [code, entry] of Object.entries(raw)) {
+    if (!/^\d{5}$/.test(code)) {
+      console.error(`[store] ${source}: "${code}" n'est pas un code à 5 chiffres, ignoré.`);
+      continue;
+    }
+    const role = entry.role || 'player';
+    valid[code] = {
+      role,
+      team: role === 'player' ? (entry.team === 'spied' ? 'spied' : 'spy') : null,
+      label: entry.label || code
+    };
+  }
+  return valid;
+}
+
+/**
+ * ACCESS_CODES lets a host like Render hold the codes outside the repo and outside
+ * the (ephemeral) data dir: "11111:spy:Espion 1,55555:admin:Admin".
+ */
+function codesFromEnv() {
+  const raw = (process.env.ACCESS_CODES || '').trim();
+  if (!raw) return null;
+  const parsed = {};
+  for (const chunk of raw.split(',')) {
+    const [code, role, ...label] = chunk.split(':').map((x) => x.trim());
+    if (!code) continue;
+    const isTeam = role === 'spy' || role === 'spied';
+    parsed[code] = {
+      role: isTeam ? 'player' : role,
+      team: isTeam ? role : null,
+      label: label.join(':') || code
+    };
+  }
+  const valid = normalizeCodes(parsed, 'ACCESS_CODES');
+  return Object.keys(valid).length ? valid : null;
+}
+
 function defaultCodes() {
+  const fromEnv = codesFromEnv();
+  if (fromEnv) return fromEnv;
+
   const custom = readConfig('codes.json');
   if (custom && Object.keys(custom).length) {
-    const valid = {};
-    for (const [code, entry] of Object.entries(custom)) {
-      if (!/^\d{5}$/.test(code)) {
-        console.error(`[store] config/codes.json: "${code}" is not 5 digits, skipped.`);
-        continue;
-      }
-      valid[code] = {
-        role: entry.role || 'player',
-        team: entry.role === 'player' || !entry.role ? entry.team || 'spy' : null,
-        label: entry.label || code
-      };
-    }
+    const valid = normalizeCodes(custom, 'config/codes.json');
     if (Object.keys(valid).length) return valid;
   }
+
   const taken = new Set();
   const codes = {};
   const add = (role, team, label) => {
     codes[randomCode(taken)] = { role, team, label };
   };
-  add('player', 'spy', 'Spy 1');
-  add('player', 'spy', 'Spy 2');
-  add('player', 'spy', 'Spy 3');
-  add('player', 'spied', 'Spied 1');
-  add('player', 'spied', 'Spied 2');
-  add('player', 'spied', 'Spied 3');
-  add('admin', null, 'Game master');
-  add('viewer', null, 'Viewer screen');
+  add('player', 'spy', 'Espion 1');
+  add('player', 'spy', 'Espion 2');
+  add('player', 'spied', 'Espionné 1');
+  add('player', 'spied', 'Espionné 2');
+  add('player', 'spied', 'Espionné 3');
+  add('admin', null, 'Maître du jeu');
+  add('viewer', null, 'Écran spectateur');
   return codes;
 }
 
 function defaultState() {
+  const settings = defaultSettings();
   return {
-    version: 1,
+    version: 2,
     createdAt: Date.now(),
     codes: defaultCodes(),
     devices: {},
     game: {
+      settings,
       status: 'running',
       startedAt: Date.now(),
+      endsAt: Date.now() + settings.durationMin * 60 * 1000,
       // Per-team window during which that team can see the opposite team live.
       reveals: { spy: { until: 0, grantedBy: null }, spied: { until: 0, grantedBy: null } },
       // Per-team window during which that team CANNOT be granted any reveal.
@@ -168,6 +239,8 @@ function ensureShape(state) {
   merged.game.reveals = Object.assign({}, base.game.reveals, (state.game || {}).reveals || {});
   merged.game.blocks = Object.assign({}, base.game.blocks, (state.game || {}).blocks || {});
   merged.game.jokers = (state.game || {}).jokers || base.game.jokers;
+  merged.game.settings = Object.assign({}, base.game.settings, (state.game || {}).settings || {});
+  merged.game.endsAt = (state.game || {}).endsAt || base.game.endsAt;
   merged.game.pins = (state.game || {}).pins || [];
   merged.game.effects = (state.game || {}).effects || [];
   merged.push = Object.assign({}, base.push, state.push || {});

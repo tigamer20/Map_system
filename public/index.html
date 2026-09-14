@@ -3,10 +3,10 @@
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, maximum-scale=1" />
-  <meta name="theme-color" content="#080b12" />
+  <meta name="theme-color" content="#0f1116" />
   <meta name="apple-mobile-web-app-capable" content="yes" />
   <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
-  <title>Access — Spy Map</title>
+  <title>Connexion — Traque</title>
   <link rel="manifest" href="/manifest.webmanifest" />
   <link rel="icon" href="/icons/icon.svg" type="image/svg+xml" />
   <link rel="apple-touch-icon" href="/icons/icon.svg" />
@@ -23,32 +23,32 @@
           </svg>
         </div>
         <div>
-          <h1 id="appName">Operation Nightfall</h1>
-          <p>Live location game</p>
+          <h1 id="appName">Traque</h1>
+          <p>Jeu de traque en direct</p>
         </div>
       </div>
 
-      <h2>Enter your access code</h2>
-      <p class="hint">Your 5-digit code decides your side: spy, spied, admin or viewer screen. One code per device.</p>
+      <h2>Entrez votre code</h2>
+      <p class="hint">Votre code à 5 chiffres définit votre rôle : espion, espionné, maître du jeu ou écran spectateur. Un code par téléphone.</p>
 
       <form id="codeForm" autocomplete="off">
         <div class="code-input" id="codeInput">
-          <input type="text" inputmode="numeric" pattern="[0-9]*" maxlength="1" aria-label="Digit 1" />
-          <input type="text" inputmode="numeric" pattern="[0-9]*" maxlength="1" aria-label="Digit 2" />
-          <input type="text" inputmode="numeric" pattern="[0-9]*" maxlength="1" aria-label="Digit 3" />
-          <input type="text" inputmode="numeric" pattern="[0-9]*" maxlength="1" aria-label="Digit 4" />
-          <input type="text" inputmode="numeric" pattern="[0-9]*" maxlength="1" aria-label="Digit 5" />
+          <input type="text" inputmode="numeric" pattern="[0-9]*" maxlength="1" aria-label="Chiffre 1" />
+          <input type="text" inputmode="numeric" pattern="[0-9]*" maxlength="1" aria-label="Chiffre 2" />
+          <input type="text" inputmode="numeric" pattern="[0-9]*" maxlength="1" aria-label="Chiffre 3" />
+          <input type="text" inputmode="numeric" pattern="[0-9]*" maxlength="1" aria-label="Chiffre 4" />
+          <input type="text" inputmode="numeric" pattern="[0-9]*" maxlength="1" aria-label="Chiffre 5" />
         </div>
-        <button class="btn" type="submit" id="submitBtn" disabled>Join the game</button>
+        <button class="btn" type="submit" id="submitBtn" disabled>Rejoindre la partie</button>
       </form>
 
       <div class="error" id="error" hidden></div>
 
       <div class="roles">
-        <div class="role-row"><span class="dot spy"></span> Spies — hunt the other team, request location access</div>
-        <div class="role-row"><span class="dot spied"></span> Spied — stay hidden, your GPS is the prize</div>
-        <div class="role-row"><span class="dot admin"></span> Admin — approves requests and jokers</div>
-        <div class="role-row"><span class="dot viewer"></span> Viewer — big screen, sees everything, plays nothing</div>
+        <div class="role-row"><span class="dot spy"></span> Espions — remplissez vos défis sans vous faire trouver</div>
+        <div class="role-row"><span class="dot spied"></span> Espionnés — traquez les espions et demandez leur position</div>
+        <div class="role-row"><span class="dot admin"></span> Maître du jeu — valide les demandes et les défis</div>
+        <div class="role-row"><span class="dot viewer"></span> Spectateur — grand écran, voit tout, ne joue pas</div>
       </div>
     </section>
   </main>

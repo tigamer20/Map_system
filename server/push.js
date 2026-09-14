@@ -7,7 +7,14 @@ let ready = false;
 
 function init() {
   const s = store.get();
-  if (!s.push.vapid) {
+  // On a host with an ephemeral disk (Render free tier), keys must come from the
+  // environment or every restart invalidates the phones' push subscriptions.
+  if (process.env.VAPID_PUBLIC_KEY && process.env.VAPID_PRIVATE_KEY) {
+    s.push.vapid = {
+      publicKey: process.env.VAPID_PUBLIC_KEY,
+      privateKey: process.env.VAPID_PRIVATE_KEY
+    };
+  } else if (!s.push.vapid) {
     s.push.vapid = webpush.generateVAPIDKeys();
     store.save(true);
   }

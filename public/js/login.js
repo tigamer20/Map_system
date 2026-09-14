@@ -64,7 +64,7 @@
 
     errorBox.hidden = true;
     submitBtn.disabled = true;
-    submitBtn.textContent = 'Checking…';
+    submitBtn.textContent = 'Vérification…';
 
     try {
       const res = await fetch('/api/login', {
@@ -73,7 +73,7 @@
         body: JSON.stringify({ code })
       });
       const data = await res.json();
-      if (!res.ok) throw new Error(data.error || 'Login failed.');
+      if (!res.ok) throw new Error(data.error || 'Connexion impossible.');
 
       localStorage.setItem('spymap.token', data.token);
       localStorage.setItem('spymap.role', data.role);
@@ -86,7 +86,7 @@
       inputs.forEach((i) => (i.value = ''));
       refresh();
       inputs[0].focus();
-      submitBtn.textContent = 'Join the game';
+      submitBtn.textContent = 'Rejoindre la partie';
     }
   });
 })();

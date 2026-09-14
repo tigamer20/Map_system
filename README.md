@@ -1,165 +1,213 @@
-# Spy Map — live location game
+# Traque — jeu de localisation en direct
 
-A web app for a hide-and-seek / spy game played in a real city.
-Two teams, an admin who approves everything, and a big viewer screen that sees it all.
+Une application web pour jouer à la traque en ville : deux équipes, un maître du jeu
+qui valide tout, et un grand écran spectateur qui voit tout.
 
-- **Spies** hunt the other team. They cannot see anyone but themselves until the admin
-  grants them access to the spied team's live position.
-- **Spied** try to stay hidden. Their phones broadcast GPS all game; the question is
-  only *who is allowed to look*.
-- **Admin** (game master) approves location requests and jokers, can open or cut
-  tracking manually, and can push a message to any team's phones.
-- **Viewer** is the commentary screen: both teams live, every event, distances between
-  players, and no way to influence the game.
+- **Espions** — ils doivent remplir leurs défis et leur quota de photos **sans se faire
+  trouver**. Leur téléphone envoie leur position, mais personne ne la voit sans
+  validation du maître du jeu.
+- **Espionnés** — ils **traquent les espions**. Ils demandent l'accès à leur position,
+  et le maître du jeu accorde ou refuse.
+- **Maître du jeu** — valide les demandes de localisation et les défis qui débloquent
+  les jokers, peut ouvrir ou couper un suivi, immobiliser une équipe, envoyer un
+  message, gérer les codes, relancer le chrono.
+- **Spectateur** — écran de commentaire : les deux équipes en direct, le journal et les
+  distances, sans aucune action possible.
 
-Admin and viewer never appear on the map — only players carry markers.
+Le maître du jeu et le spectateur n'apparaissent jamais sur la carte : seuls les
+joueurs ont un marqueur.
 
-## Run it
+## Démarrer en local
 
 ```bash
 npm install
 npm start
 ```
 
-The server prints every access code on boot:
+Le serveur affiche les codes d'accès au démarrage :
 
 ```
-  Spy map running on http://localhost:3000
+  TRAQUE — http://localhost:3000
 
-  Access codes:
-  10458  player  spy     Spy 1
+  Traqueurs : Espionnés · durée 300 min
+
+  Codes d'accès :
+  10458  player  spy    Espion 1
   ...
 ```
 
-Open the URL, type a 5-digit code, and the device is bound to that role until it signs out.
+Ouvrez l'adresse, tapez un code à 5 chiffres, et le téléphone est lié à ce rôle
+jusqu'à la déconnexion.
 
-### Phones need HTTPS
+### Le GPS des téléphones exige du HTTPS
 
-Browsers only give GPS to secure origins. `localhost` works on your laptop, but a phone
-on your Wi-Fi does **not** — it needs `https://`. Two easy options:
+Les navigateurs ne donnent la position qu'à une origine sécurisée. `localhost` marche
+sur votre ordinateur, mais **pas** pour un téléphone sur le même Wi-Fi. Deux options :
 
 ```bash
-# a free public https URL pointing at your local server
-cloudflared tunnel --url http://localhost:3000
-#   or
-ngrok http 3000
+cloudflared tunnel --url http://localhost:3000   # URL https publique instantanée
+ngrok http 3000                                   # équivalent
 ```
 
-Or deploy it: any Node host works (Render, Railway, Fly.io, a small VPS). Set the `PORT`
-env var if the host requires one; everything else runs out of the box.
+Ou déployez l'app — voir la section suivante.
 
-## Roles and codes
+## Déployer sur Render
 
-| | |
+Le dépôt contient déjà un blueprint `render.yaml`. Deux façons de faire :
+
+**A. Blueprint (le plus simple)** — Render → *New* → *Blueprint* → choisir ce dépôt.
+Render lit `render.yaml` et crée le service.
+
+**B. À la main** — Render → *New* → *Web Service* → choisir ce dépôt, puis :
+
+| Réglage | Valeur |
 |---|---|
-| Code format | exactly 5 digits |
-| One code | one player slot, one marker, one name on the map |
-| Re-login | allowed — the code keeps its identity and position |
-| Deleting a code | signs that device out immediately |
+| Language / Runtime | `Node` |
+| Build Command | `npm install` |
+| Start Command | `npm start` |
+| Health Check Path | `/api/config` |
+| Instance Type | `Starter` (voir l'avertissement plus bas) |
 
-The admin panel (**Codes** tab) creates, re-rolls and deletes codes live during a game.
+Ne définissez **pas** `PORT` : Render le fournit, l'app le lit automatiquement.
 
-To pick your own memorable codes instead of the random ones, copy
-`config/codes.json.example` to `config/codes.json` **before the first launch**
-(or delete `data/state.json` and restart):
+### Variables d'environnement à définir dans Render
 
-```json
-{
-  "11111": { "role": "player", "team": "spy",   "label": "Spy 1" },
-  "55555": { "role": "admin",  "label": "Game master" },
-  "66666": { "role": "viewer", "label": "Viewer screen" }
-}
+Onglet *Environment* du service :
+
+```
+NODE_VERSION      22.22.2
+APP_NAME          TRAQUE
+ACCESS_CODES      11111:spy:Espion 1,22222:spy:Espion 2,33333:spied:Espionné 1,44444:spied:Espionné 2,55555:admin:Maître du jeu,66666:viewer:Écran
+VAPID_PUBLIC_KEY  <voir ci-dessous>
+VAPID_PRIVATE_KEY <voir ci-dessous>
+MAPTILER_KEY      <optionnel>
 ```
 
-## How a round plays out
+`ACCESS_CODES` est essentiel sur Render : le disque est remis à zéro à chaque
+redéploiement, donc sans cette variable l'app tire de **nouveaux codes aléatoires** à
+chaque redémarrage. Format `code:rôle:nom`, séparés par des virgules — le rôle est
+`spy`, `spied`, `admin` ou `viewer`. Gardez ces codes dans Render et pas dans le dépôt :
+un dépôt public rendrait vos codes publics.
 
-1. Everyone signs in with their code. Players' phones start broadcasting GPS.
-2. The spies open **Requests** and ask for the spied team's position, either
-   **live tracking** (a countdown window) or a **snapshot** (one frozen pin).
-3. The admin sees the request in **Approvals** and grants 3 min, 10 min, or denies it.
-4. The spied team's phones get a *"You are exposed"* alert the moment access opens.
-5. Either team can burn one of its **two jokers**. The admin checks the requirement
-   before approving; the other team is notified as soon as it fires.
-6. The viewer screen follows everything, with live distances between the two teams.
-
-The admin can also open or cut tracking by hand at any time from the **Control** tab,
-send a message to one or both teams, and reset the round (codes and sign-ins survive).
-
-## Jokers
-
-Two per team, each gated behind a requirement the admin validates:
-
-| Team | Joker | Requirement | Effect |
-|---|---|---|---|
-| Spies | Satellite Ping | The whole spy team must be together at a bus stop or metro station | Drops a pin with each spied player's exact position, right now |
-| Spies | Roadblock | Name out loud the district you think they are hiding in | The spied team must stay put for 10 minutes |
-| Spied | Smoke Screen | Send the admin a photo of the street sign next to you | The spies get no location access for 15 minutes |
-| Spied | Counter-Intel | Answer the admin's trivia question | The spied team sees every spy for 3 minutes |
-
-Rewrite them freely: copy `config/jokers.json.example` to `config/jokers.json` and edit
-names, requirements, durations and effects. See `config/README.md` for the list of
-effects and for `"requiresApproval": false`, which makes a joker fire instantly without
-the admin.
-
-## Phone notifications
-
-Every alert shows up in-app with a sound and a vibration. For alerts that land while the
-phone is locked, tap **Enable phone alerts** in the app (Control / Device card):
-
-- **Android:** works in Chrome straight away.
-- **iPhone:** Safari → Share → *Add to Home Screen*, open the app from the home screen
-  icon, then enable alerts. iOS only allows web push for installed apps.
-
-Push keys (VAPID) are generated automatically on first boot and stored in
-`data/state.json`.
-
-## A more detailed map
-
-The default basemap is CARTO Voyager (OpenStreetMap data) and shows shop and restaurant
-names as you zoom in. The satellite button switches to Esri imagery with labels.
-
-For the closest thing to Apple Maps — sharper POIs, house numbers, transit — get a free
-[MapTiler](https://www.maptiler.com/) key and start the server with it:
+Pour les notifications push, générez une paire de clés une fois et collez-la dans Render :
 
 ```bash
-MAPTILER_KEY=your_key npm start
+npm run vapid
 ```
 
-The app then loads MapTiler's vector *Streets v2* style instead, with no other change.
+### Avertissement sur le plan gratuit
 
-## Environment variables
+Une instance gratuite **s'endort après 15 minutes sans trafic** et met ~30 s à se
+réveiller. Les positions sont gardées en mémoire : au réveil, la carte est vide tant que
+les téléphones n'ont pas renvoyé un point (ce qui arrive tout seul en 8 secondes), et le
+chrono ainsi que les jokers déjà joués sont conservés dans `data/state.json`… qui est lui
+aussi effacé à chaque redéploiement. Pour 5 h de jeu, prenez le plan **Starter** (7 $/mois,
+pas de mise en veille) ou ajoutez un disque persistant monté sur `/opt/render/project/src/data`.
 
-| Variable | Default | Purpose |
+## Les jokers
+
+Chaque joker ne sert **qu'une seule fois**. L'équipe adverse reçoit une notification dès
+qu'il est joué.
+
+### Espions — 2 jokers partagés, à débloquer par un défi
+
+| Joker | Défi pour le débloquer | Effet |
 |---|---|---|
-| `PORT` | `3000` | HTTP port |
-| `APP_NAME` | `OPERATION NIGHTFALL` | Title on the login screen |
-| `MAPTILER_KEY` | — | Enables the MapTiler vector basemap |
-| `DATA_DIR` | `./data` | Where `state.json` is written |
-| `PUSH_SUBJECT` | `mailto:admin@example.com` | Contact address sent with web push |
+| Yeux fermés | Prendre une photo de tous les membres des espionnés sur la même photo | Les espionnés vont à l'endroit indiqué et ferment les yeux 30 secondes, sans poursuite possible |
+| Défi annulé | Réaliser soi-même le défi que l'on veut réinitialiser | Un défi des espionnés repasse en « non fait » |
 
-## Project layout
+Le joueur appuie sur **Défi fait, débloquer**, le maître du jeu vérifie le défi et valide.
+Le joker devient jouable ; au moment de le jouer, l'app demande la précision prévue par
+la règle (l'endroit, ou le défi concerné) et l'envoie avec la notification.
+
+### Espionnés — 2 jokers, utilisables directement
+
+| Joker | Effet |
+|---|---|
+| Gel | Les deux espions doivent rester figés sur place pendant 2 minutes |
+| Localisation 5 minutes | La position des espions en direct pendant 5 minutes |
+
+Tout est modifiable sans toucher au code : copiez `config/jokers.json.example` en
+`config/jokers.json` et changez noms, défis, durées et effets. Voir `config/README.md`
+pour la liste des effets disponibles.
+
+## Déroulé d'une partie
+
+1. Chacun se connecte avec son code. Les téléphones des joueurs envoient leur position.
+2. Les espionnés demandent la position des espions depuis l'onglet **Demandes** :
+   **suivi en direct** (fenêtre avec compte à rebours) ou **envoi ponctuel** (un seul
+   point figé sur la carte).
+3. Le maître du jeu voit la demande dans **Validations** et accorde 3 min, 10 min, ou refuse.
+4. Les espions reçoivent aussitôt l'alerte « Vous êtes repérés » sur leur téléphone.
+5. Les jokers s'utilisent depuis l'onglet **Jokers** de chaque équipe.
+6. Le maître du jeu suit le chrono de 5 h et peut, à tout moment, ouvrir ou couper un
+   accès, immobiliser une équipe 30 s ou 2 min (la règle « rester figé 30 secondes après
+   avoir envoyé sa position »), écrire aux équipes ou réinitialiser la partie.
+
+## Notifications sur téléphone
+
+Chaque alerte s'affiche dans l'app avec un son et une vibration. Pour recevoir aussi les
+alertes **téléphone verrouillé**, appuyez sur *Activer les notifications* dans
+l'onglet Contrôle :
+
+- **Android** : fonctionne directement dans Chrome.
+- **iPhone** : Safari → Partager → *Sur l'écran d'accueil*, ouvrir l'app depuis l'icône,
+  puis activer les notifications. iOS ne permet le push web que pour une app installée.
+
+## La carte
+
+Trois fonds, le bouton en haut à droite les enchaîne :
+
+1. **Plan sombre** (par défaut) — assorti à l'interface, façon plan de nuit.
+2. **Plan détaillé** — c'est celui qui affiche le plus de commerces et de noms de rues.
+3. **Satellite** — imagerie Esri avec les libellés.
+
+Avec une clé [MapTiler](https://www.maptiler.com/) gratuite, les deux plans passent en
+vectoriel (POI plus nets, numéros de rue, transports) :
+
+```bash
+MAPTILER_KEY=votre_cle npm start
+```
+
+## Variables d'environnement
+
+| Variable | Défaut | Rôle |
+|---|---|---|
+| `PORT` | `3000` | Port HTTP (fourni par Render) |
+| `APP_NAME` | `TRAQUE` | Titre sur l'écran de connexion |
+| `ACCESS_CODES` | — | Codes fixes : `code:rôle:nom,…` |
+| `MAPTILER_KEY` | — | Active les fonds vectoriels MapTiler |
+| `VAPID_PUBLIC_KEY` / `VAPID_PRIVATE_KEY` | générées | Clés des notifications push |
+| `DATA_DIR` | `./data` | Emplacement de `state.json` |
+| `PUSH_SUBJECT` | `mailto:admin@example.com` | Contact envoyé avec le push |
+
+## Structure
 
 ```
-server/index.js    HTTP + WebSocket, REST API, auth by code
-server/store.js    State, persistence to data/state.json, config overrides
-server/game.js     Visibility rules, requests, jokers, effects, events
-server/push.js     Web push (VAPID)
-public/index.html  Login (5-digit code)
-public/app.html    Map app — adapts to player / admin / viewer
-public/js/map.js   MapLibre basemaps, markers, snapshot pins, accuracy halo
-public/js/app.js   Live state, panels, actions, alerts
-config/            Optional codes.json / jokers.json overrides
+server/index.js    HTTP + WebSocket, API REST, authentification par code
+server/store.js    État, persistance dans data/state.json, fichiers config/
+server/game.js     Règles de visibilité, demandes, jokers, effets, journal
+server/push.js     Notifications push (VAPID)
+public/index.html  Connexion (code à 5 chiffres)
+public/app.html    Carte — s'adapte au rôle joueur / maître du jeu / spectateur
+public/js/map.js   Fonds de carte MapLibre, marqueurs, points figés, cercle de précision
+public/js/app.js   État en direct, panneaux, actions, alertes
+config/            codes.json / jokers.json / game.json (optionnels)
+render.yaml        Blueprint de déploiement Render
 ```
 
-Positions travel over a WebSocket and are filtered **server-side**: a spy's browser never
-receives the spied team's coordinates unless a reveal is actually open. Positions live in
-memory only — restarting the server clears the map but keeps codes and jokers.
+Les positions passent par un WebSocket et sont filtrées **côté serveur** : le navigateur
+des espionnés ne reçoit jamais les coordonnées des espions tant qu'aucun accès n'est
+ouvert. Elles ne vivent qu'en mémoire — un redémarrage vide la carte mais conserve les
+codes, les jokers et le chrono.
 
-## Good to know
+## Bon à savoir
 
-- GPS accuracy is whatever the phone reports; each marker shows its own ± radius, and a
-  player whose phone has been silent for 5 minutes fades out and is marked *signal lost*.
-- Keep the app in the foreground while playing. Phones stop the GPS of background tabs;
-  the app requests a screen wake lock where the browser supports it.
-- There is no password beyond the code, and no encryption of positions at rest. It is a
-  game for friends, not a security product — don't run it with strangers.
+- La précision GPS est celle que rapporte le téléphone ; chaque marqueur affiche son
+  rayon ±, et un joueur silencieux depuis 5 minutes passe en « signal perdu ».
+- Gardez l'app au premier plan pendant la partie : les téléphones coupent le GPS des
+  onglets en arrière-plan. L'app demande un verrou d'écran quand le navigateur le permet.
+- Il n'y a pas d'autre mot de passe que le code, et les positions ne sont pas chiffrées
+  au repos. C'est un jeu entre amis, pas un outil de sécurité.
+- Le suivi des défis et du quota de photos n'est pas dans l'app : le maître du jeu les
+  valide de vive voix, comme sur les feuilles de règles.

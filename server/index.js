@@ -59,13 +59,13 @@ function auth(req, res, next) {
   const header = req.get('authorization') || '';
   const token = header.startsWith('Bearer ') ? header.slice(7) : req.query.token;
   const session = sessionFromToken(token);
-  if (!session) return res.status(401).json({ error: 'Not signed in. Enter your code again.' });
+  if (!session) return res.status(401).json({ error: 'Session expirée. Entrez votre code à nouveau.' });
   req.session = session;
   next();
 }
 
 function adminOnly(req, res, next) {
-  if (req.session.role !== 'admin') return res.status(403).json({ error: 'Admin only.' });
+  if (req.session.role !== 'admin') return res.status(403).json({ error: 'Réservé au maître du jeu.' });
   next();
 }
 
@@ -75,26 +75,26 @@ app.get('/api/config', (req, res) => {
   res.json({
     mapTilerKey: process.env.MAPTILER_KEY || '',
     vapidPublicKey: push.publicKey(),
-    appName: process.env.APP_NAME || 'OPERATION NIGHTFALL'
+    appName: store.get().game.settings.appName
   });
 });
 
 app.post('/api/login', (req, res) => {
   const ip = req.ip || 'unknown';
-  if (rateLimited(ip)) return res.status(429).json({ error: 'Too many tries. Wait a minute.' });
+  if (rateLimited(ip)) return res.status(429).json({ error: 'Trop de tentatives. Attendez une minute.' });
 
   const code = String(req.body.code || '').trim();
-  if (!/^\d{5}$/.test(code)) return res.status(400).json({ error: 'The code is 5 digits.' });
+  if (!/^\d{5}$/.test(code)) return res.status(400).json({ error: 'Le code fait 5 chiffres.' });
 
   const s = store.get();
   const entry = s.codes[code];
-  if (!entry) return res.status(401).json({ error: 'Unknown code.' });
+  if (!entry) return res.status(401).json({ error: 'Code inconnu.' });
 
   const token = crypto.randomBytes(24).toString('hex');
   s.devices[token] = { code, createdAt: Date.now(), lastSeen: Date.now() };
   store.save();
 
-  game.addEvent('join', `${entry.label} signed in`, {
+  game.addEvent('join', `${entry.label} a rejoint la partie`, {
     team: entry.team,
     scope: entry.role === 'player' ? 'team' : 'all'
   });
@@ -115,7 +115,7 @@ app.get('/api/me', auth, (req, res) => res.json(req.session));
 app.get('/api/state', auth, (req, res) => res.json(game.snapshotFor(req.session)));
 
 app.post('/api/position', auth, (req, res) => {
-  if (req.session.role !== 'player') return res.status(403).json({ error: 'Players only.' });
+  if (req.session.role !== 'player') return res.status(403).json({ error: 'Réservé aux joueurs.' });
   const { lat, lng } = req.body;
   if (typeof lat !== 'number' || typeof lng !== 'number') {
     return res.status(400).json({ error: 'lat/lng required.' });
@@ -127,20 +127,29 @@ app.post('/api/position', auth, (req, res) => {
 
 app.post('/api/request', auth, async (req, res) => {
   try {
-    const { request, notify } = game.createRequest(req.session, req.body.type, req.body.payload || {});
+    const request = game.createRequest(req.session, req.body.type, req.body.payload || {});
     broadcast();
-    if (notify.length) {
-      for (const n of notify) await notifyTeam(n.team, n);
-    } else {
-      await notifyRoles(['admin'], {
-        title: 'New request',
-        body: `${game.teamName(req.session.team)}: ${
-          request.type === 'joker' ? 'joker approval' : 'location access'
-        }`,
-        kind: 'request'
-      });
-    }
+    await notifyRoles(['admin'], {
+      title: 'Nouvelle demande',
+      body: `${game.teamName(req.session.team)} : ${
+        request.type === 'unlock' ? 'déblocage de joker' : 'localisation'
+      }`,
+      kind: 'request'
+    });
     res.json({ ok: true, request });
+  } catch (err) {
+    res.status(400).json({ error: err.message });
+  }
+});
+
+// Playing a joker is immediate: the rules gate it with an unlock, not with an approval.
+app.post('/api/joker/play', auth, async (req, res) => {
+  try {
+    if (req.session.role !== 'player') throw new Error('Réservé aux joueurs.');
+    const notify = game.playJoker(req.session.team, req.body.jokerId, { detail: req.body.detail });
+    broadcast();
+    for (const n of notify) await notifyTeam(n.team, n);
+    res.json({ ok: true });
   } catch (err) {
     res.status(400).json({ error: err.message });
   }
@@ -191,14 +200,47 @@ app.post('/api/admin/reveal', auth, adminOnly, async (req, res) => {
   }
 });
 
+app.post('/api/admin/freeze', auth, adminOnly, async (req, res) => {
+  const team = req.body.team === 'spy' ? 'spy' : 'spied';
+  const seconds = Math.min(600, Math.max(5, Number(req.body.seconds || 30)));
+  game.freezeTeam(team, seconds, req.body.label || `Immobilisation ${seconds} s`);
+  game.addEvent('joker', `${game.teamName(team)} figés ${seconds} s par le maître du jeu`, { scope: 'all' });
+  broadcast();
+  await notifyTeam(team, {
+    title: 'Restez sur place',
+    body: `Vous devez rester immobiles pendant ${seconds} secondes.`,
+    kind: 'joker',
+    loud: true
+  });
+  res.json({ ok: true });
+});
+
+app.post('/api/admin/clock', auth, adminOnly, async (req, res) => {
+  if (req.body.action === 'stop') game.stopClock();
+  else game.startClock(req.body.minutes);
+  broadcast();
+  const s = store.get();
+  for (const team of ['spy', 'spied']) {
+    await notifyTeam(team, {
+      title: req.body.action === 'stop' ? 'Partie terminée' : 'La partie commence',
+      body:
+        req.body.action === 'stop'
+          ? 'Le chrono est arrêté.'
+          : `Vous avez ${Math.round(s.game.settings.durationMin / 60)} h.`,
+      kind: 'announce'
+    });
+  }
+  res.json({ ok: true });
+});
+
 app.post('/api/admin/announce', auth, adminOnly, async (req, res) => {
   const text = String(req.body.text || '').slice(0, 300);
   const target = req.body.team || 'all';
-  if (!text) return res.status(400).json({ error: 'Nothing to send.' });
+  if (!text) return res.status(400).json({ error: 'Message vide.' });
   game.addEvent('announce', text, { team: target === 'all' ? null : target, scope: target === 'all' ? 'all' : 'team' });
   const teams = target === 'all' ? ['spy', 'spied'] : [target];
   for (const t of teams) {
-    await notifyTeam(t, { title: 'Message from the admin', body: text, kind: 'announce', loud: true });
+    await notifyTeam(t, { title: 'Message du maître du jeu', body: text, kind: 'announce', loud: true });
   }
   broadcast();
   res.json({ ok: true });
@@ -214,7 +256,7 @@ app.post('/api/admin/codes', auth, adminOnly, (req, res) => {
     s.codes[code] = {
       role: req.body.role || 'player',
       team: req.body.role === 'player' ? req.body.team || 'spy' : null,
-      label: String(req.body.label || 'New player').slice(0, 40)
+      label: String(req.body.label || 'Nouveau joueur').slice(0, 40)
     };
     store.save(true);
     return res.json({ ok: true, code });
@@ -224,7 +266,7 @@ app.post('/api/admin/codes', auth, adminOnly, (req, res) => {
     const code = String(req.body.code || '');
     if (s.codes[code] && s.codes[code].role === 'admin') {
       const admins = Object.values(s.codes).filter((c) => c.role === 'admin').length;
-      if (admins <= 1) return res.status(400).json({ error: 'Keep at least one admin code.' });
+      if (admins <= 1) return res.status(400).json({ error: 'Gardez au moins un code admin.' });
     }
     delete s.codes[code];
     game.positions.delete(code);
@@ -239,7 +281,7 @@ app.post('/api/admin/codes', auth, adminOnly, (req, res) => {
   if (action === 'rotate') {
     const oldCode = String(req.body.code || '');
     const entry = s.codes[oldCode];
-    if (!entry) return res.status(404).json({ error: 'Unknown code.' });
+    if (!entry) return res.status(404).json({ error: 'Code inconnu.' });
     const taken = new Set(Object.keys(s.codes));
     const newCode = store.randomCode(taken);
     s.codes[newCode] = entry;
@@ -257,19 +299,19 @@ app.post('/api/admin/codes', auth, adminOnly, (req, res) => {
     return res.json({ ok: true, code: newCode });
   }
 
-  res.status(400).json({ error: 'Unknown action.' });
+  res.status(400).json({ error: 'Action inconnue.' });
 });
 
 app.post('/api/admin/reset', auth, adminOnly, (req, res) => {
   store.resetGame();
   game.positions.clear();
-  game.addEvent('reset', 'The admin reset the game', { scope: 'all' });
+  game.addEvent('reset', 'Le maître du jeu a réinitialisé la partie', { scope: 'all' });
   broadcast();
   res.json({ ok: true });
 });
 
 app.post('/api/push/subscribe', auth, (req, res) => {
-  if (!req.body || !req.body.endpoint) return res.status(400).json({ error: 'Bad subscription.' });
+  if (!req.body || !req.body.endpoint) return res.status(400).json({ error: 'Abonnement invalide.' });
   push.subscribe(req.session.code, req.body);
   res.json({ ok: true });
 });
@@ -377,9 +419,12 @@ setInterval(broadcast, 1000);
 
 server.listen(PORT, () => {
   const s = store.get();
-  const rows = Object.entries(s.codes).map(([code, c]) => `  ${code}  ${c.role.padEnd(6)}  ${c.team || '-'}\t${c.label}`);
-  console.log(`\n  Spy map running on http://localhost:${PORT}\n`);
-  console.log('  Access codes:');
+  const rows = Object.entries(s.codes).map(
+    ([code, c]) => `  ${code}  ${c.role.padEnd(6)}  ${(c.team || '-').padEnd(5)}  ${c.label}`
+  );
+  console.log(`\n  ${s.game.settings.appName} — http://localhost:${PORT}\n`);
+  console.log(`  Traqueurs : ${game.teamName(s.game.settings.hunters)} · durée ${s.game.settings.durationMin} min\n`);
+  console.log('  Codes d\'accès :');
   console.log(rows.join('\n'));
-  console.log('\n  Phones need HTTPS for GPS: use a tunnel (cloudflared / ngrok) or deploy.\n');
+  console.log('\n  Le GPS des téléphones exige du HTTPS : tunnel (cloudflared / ngrok) ou déploiement.\n');
 });

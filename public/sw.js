@@ -3,7 +3,7 @@ self.addEventListener('install', (event) => self.skipWaiting());
 self.addEventListener('activate', (event) => event.waitUntil(self.clients.claim()));
 
 self.addEventListener('push', (event) => {
-  let payload = { title: 'Spy map', body: 'Something happened in the game.' };
+  let payload = { title: 'Traque', body: 'Il se passe quelque chose dans la partie.' };
   try {
     if (event.data) payload = Object.assign(payload, event.data.json());
   } catch (err) {
@@ -15,7 +15,7 @@ self.addEventListener('push', (event) => {
       body: payload.body,
       icon: '/icons/icon.svg',
       badge: '/icons/icon.svg',
-      tag: payload.kind === 'joker' ? 'spymap-joker' : 'spymap',
+      tag: payload.kind === 'joker' ? 'traque-joker' : 'traque',
       renotify: true,
       requireInteraction: !!payload.loud,
       vibrate: [220, 90, 220, 90, 420],

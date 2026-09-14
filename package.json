@@ -1,13 +1,14 @@
 {
-  "name": "spy-map",
+  "name": "traque",
   "version": "1.0.0",
   "private": true,
-  "description": "Live location spy game: Spies vs Spied, with admin approvals, jokers and a viewer mode.",
+  "description": "Jeu de traque en direct : espions vs espionnés, carte live, validations et jokers.",
   "type": "commonjs",
   "main": "server/index.js",
   "scripts": {
     "start": "node server/index.js",
-    "dev": "node --watch server/index.js"
+    "dev": "node --watch server/index.js",
+    "vapid": "node scripts/generate-vapid.js"
   },
   "engines": {
     "node": ">=18"
