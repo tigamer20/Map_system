@@ -42,6 +42,13 @@ function rateLimited(ip) {
   return entry.count > 12;
 }
 
+/** Safari efface volontiers le localStorage : un cookie sert de filet. */
+function tokenFromCookie(req) {
+  const raw = req.headers.cookie || '';
+  const found = raw.split(';').map((c) => c.trim()).find((c) => c.startsWith('traque_token='));
+  return found ? decodeURIComponent(found.slice('traque_token='.length)) : null;
+}
+
 function sessionFromToken(token) {
   if (!token) return null;
   const s = store.get();
@@ -61,7 +68,7 @@ function sessionFromToken(token) {
 
 function auth(req, res, next) {
   const header = req.get('authorization') || '';
-  const token = header.startsWith('Bearer ') ? header.slice(7) : req.query.token;
+  const token = header.startsWith('Bearer ') ? header.slice(7) : req.query.token || tokenFromCookie(req);
   const session = sessionFromToken(token);
   if (!session) return res.status(401).json({ error: 'Session expirée. Entrez votre code à nouveau.' });
   req.session = session;
@@ -118,28 +125,51 @@ app.post('/api/login', (req, res) => {
   s.devices[token] = { code, createdAt: Date.now(), lastSeen: Date.now() };
   store.save();
 
-  game.addEvent('join', `${entry.label} a rejoint la partie`, {
-    team: entry.team,
-    scope: entry.role === 'player' ? 'team' : 'all'
+  res.cookie('traque_token', token, {
+    httpOnly: true,
+    sameSite: 'lax',
+    secure: req.secure,
+    path: '/',
+    maxAge: 30 * 24 * 60 * 60 * 1000
   });
+
+  const session = { token, code, role: entry.role, team: entry.team, label: entry.label };
+  const admitted = game.isAdmitted(session);
+  if (!admitted) {
+    game.requestAdmission(session);
+    notifyRoles(['admin'], {
+      title: 'Nouveau joueur',
+      body: `${entry.label} attend votre accord pour entrer.`,
+      kind: 'request'
+    });
+  } else {
+    game.addEvent('join', `${entry.label} s'est connecté`, {
+      team: entry.team,
+      scope: entry.role === 'player' ? 'team' : 'all'
+    });
+  }
   broadcast();
 
-  res.json({ token, role: entry.role, team: entry.team, label: entry.label });
+  res.json({ token, role: entry.role, team: entry.team, label: entry.label, admitted });
 });
 
 app.post('/api/logout', auth, (req, res) => {
   const s = store.get();
   delete s.devices[req.session.token];
   store.save();
+  res.clearCookie('traque_token', { path: '/' });
   res.json({ ok: true });
 });
 
+// Renvoie aussi le jeton : c'est ce qui permet de retrouver sa session quand le
+// navigateur a vidé son localStorage mais gardé le cookie.
 app.get('/api/me', auth, (req, res) => res.json(req.session));
 
 app.get('/api/state', auth, (req, res) => res.json(game.snapshotFor(req.session)));
 
 app.post('/api/position', auth, (req, res) => {
   if (req.session.role !== 'player') return res.status(403).json({ error: 'Réservé aux joueurs.' });
+  if (!game.isAdmitted(req.session)) return res.status(403).json({ error: "Vous n'êtes pas encore admis." });
   const { lat, lng } = req.body;
   if (typeof lat !== 'number' || typeof lng !== 'number') {
     return res.status(400).json({ error: 'lat/lng required.' });
@@ -326,22 +356,44 @@ app.post('/api/admin/freeze', auth, adminOnly, async (req, res) => {
   res.json({ ok: true });
 });
 
+let compteARebours = null;
+
 app.post('/api/admin/clock', auth, adminOnly, async (req, res) => {
-  if (req.body.action === 'stop') game.stopClock();
-  else game.startClock(req.body.minutes);
-  broadcast();
-  const s = store.get();
-  for (const team of ['spy', 'spied']) {
-    await notifyTeam(team, {
-      title: req.body.action === 'stop' ? 'Partie terminée' : 'La partie commence',
-      body:
-        req.body.action === 'stop'
-          ? 'Le chrono est arrêté.'
-          : `Vous avez ${Math.round(s.game.settings.durationMin / 60)} h.`,
-      kind: 'announce'
-    });
+  try {
+    const s = store.get();
+    if (req.body.action === 'stop') {
+      clearTimeout(compteARebours);
+      compteARebours = null;
+      game.stopClock();
+      broadcast();
+      for (const team of ['spy', 'spied']) {
+        await notifyTeam(team, { title: 'Partie terminée', body: 'Le chrono est arrêté.', kind: 'announce' });
+      }
+      return res.json({ ok: true });
+    }
+
+    // Départ : un décompte visible et sonore, puis la partie démarre d'elle-même.
+    const delay = game.startCountdown(req.body.seconds, req.body.minutes);
+    broadcast();
+    for (const team of ['spy', 'spied']) {
+      await notifyTeam(team, {
+        title: 'La partie va commencer',
+        body: `Départ dans ${delay} secondes. ${Math.round(s.game.settings.durationMin / 60)} h de jeu.`,
+        kind: 'announce',
+        loud: true,
+        inApp: false
+      });
+    }
+    clearTimeout(compteARebours);
+    compteARebours = setTimeout(() => {
+      compteARebours = null;
+      game.startClock();
+      broadcast();
+    }, delay * 1000);
+    res.json({ ok: true, delay });
+  } catch (err) {
+    res.status(400).json({ error: err.message });
   }
-  res.json({ ok: true });
 });
 
 app.post('/api/admin/announce', auth, adminOnly, async (req, res) => {
@@ -367,7 +419,8 @@ app.post('/api/admin/codes', auth, adminOnly, (req, res) => {
     s.codes[code] = {
       role: req.body.role || 'player',
       team: req.body.role === 'player' ? req.body.team || 'spy' : null,
-      label: String(req.body.label || 'Nouveau joueur').slice(0, 40)
+      label: String(req.body.label || 'Nouveau joueur').slice(0, 40),
+      admitted: false
     };
     store.save(true);
     return res.json({ ok: true, code });
@@ -462,7 +515,7 @@ wss.on('connection', (socket) => {
 
     if (!socket.session) return;
 
-    if (msg.t === 'pos' && socket.session.role === 'player') {
+    if (msg.t === 'pos' && socket.session.role === 'player' && game.isAdmitted(socket.session)) {
       if (typeof msg.lat === 'number' && typeof msg.lng === 'number') {
         game.setPosition(socket.session.code, msg);
         broadcast();

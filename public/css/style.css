@@ -125,6 +125,8 @@ button { cursor: pointer; border: none; background: none; }
 #map { position: absolute; inset: 0; }
 /* L'alerte se lit par-dessus l'écran de pause, qui reste visible derrière. */
 #pauseLayer { z-index: 49; }
+#waitLayer { z-index: 52; }
+#countLayer { z-index: 53; }
 #alertLayer { z-index: 51; }
 .maplibregl-ctrl-attrib { font-size: 10px; }
 
@@ -385,4 +387,16 @@ button { cursor: pointer; border: none; background: none; }
    qu'un défilement horizontal que personne ne devine. */
 @media (max-width: 460px) {
   .tabs { flex-wrap: wrap; overflow: visible; }
+}
+
+/* Décompte d'avant-partie : lisible à bout de bras. */
+.countdown-number {
+  font-size: 88px; font-weight: 700; line-height: 1;
+  font-variant-numeric: tabular-nums; letter-spacing: -0.04em;
+  color: var(--spy); margin-bottom: 14px;
+  animation: battement 1s ease-out;
+}
+@keyframes battement {
+  0% { transform: scale(1.35); opacity: 0.4; }
+  40% { transform: scale(1); opacity: 1; }
 }

@@ -77,9 +77,11 @@
     return rasterStyle(ESRI_IMAGERY, ATTRIB_ESRI, { labels: ESRI_PLACES });
   }
 
+  // Le plan OpenStreetMap est le fond par défaut : c'est celui qui montre le plus
+  // de commerces et de noms de rues.
   const BASEMAPS = [
+    { name: 'streets', label: 'Plan OpenStreetMap', build: streetsStyle },
     { name: 'dark', label: 'Plan sombre', build: darkStyle },
-    { name: 'streets', label: 'Plan détaillé', build: streetsStyle },
     { name: 'satellite', label: 'Satellite', build: satelliteStyle }
   ];
 
@@ -106,7 +108,7 @@
   function GameMap(container, config, options) {
     const opts = options || {};
     this.config = config;
-    this.basemap = basemapByName(localStorage.getItem('spymap.basemap') || 'dark').name;
+    this.basemap = basemapByName(localStorage.getItem('spymap.basemap') || 'streets').name;
     this.markers = new Map();
     this.pinMarkers = new Map();
     this.follow = true;

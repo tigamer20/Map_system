@@ -8,10 +8,10 @@ qui valide tout, et un grand écran spectateur qui voit tout.
   Leur propre position, elle, n'est visible qu'après validation du maître du jeu.
 - **Espionnés** — ils **traquent les espions**. Ils demandent l'accès à leur position,
   et le maître du jeu accorde ou refuse.
-- **Maître du jeu** — valide les demandes de localisation et les défis qui débloquent
-  les jokers, peut ouvrir ou couper un suivi, immobiliser une équipe, envoyer un
-  message, gérer les codes, relancer le chrono et **mettre la partie en pause** avec
-  un message affiché sur tous les écrans.
+- **Maître du jeu** — **admet les joueurs dans la partie**, **lance le départ**, valide
+  les demandes de localisation et les défis qui débloquent les jokers, peut ouvrir ou
+  couper un suivi, immobiliser une équipe, envoyer un message, gérer les codes et
+  **mettre la partie en pause** avec un message affiché sur tous les écrans.
 - **Spectateur** — écran de commentaire : les deux équipes en direct, le journal et les
   distances, sans aucune action possible.
 
@@ -134,20 +134,38 @@ pour la liste des effets disponibles.
 
 ## Déroulé d'une partie
 
-1. Chacun se connecte avec son code. Les téléphones des joueurs envoient leur position.
-   Les espions voient aussitôt les espionnés sur leur carte, en continu.
-2. Les espionnés demandent la position des espions depuis l'onglet **Demandes** :
+1. Chacun se connecte avec son code et **attend d'être admis** : le maître du jeu voit
+   la demande dans **Validations** et l'accepte. Tant qu'un joueur n'est pas admis, sa
+   position ne circule pas et il ne voit rien de la partie.
+2. Quand tout le monde est là, le maître du jeu **lance le départ** : un décompte sonore
+   s'affiche sur tous les écrans, puis le chrono de 5 h démarre. Avant ça, rien n'est
+   jouable — ni joker, ni demande, ni défi.
+3. Les espions voient aussitôt les espionnés sur leur carte, en continu.
+4. Les espionnés demandent la position des espions depuis l'onglet **Demandes** :
    **suivi en direct** (fenêtre avec compte à rebours) ou **envoi ponctuel** (un seul
    point figé sur la carte).
-3. Le maître du jeu voit la demande dans **Validations** et accorde 3 min, 10 min, ou refuse.
-4. Les espions reçoivent aussitôt l'alerte « Vous êtes repérés » sur leur téléphone.
-5. Les jokers s'utilisent depuis l'onglet **Jokers** de chaque équipe.
-6. Les espionnés remplissent leurs **défis** depuis leur onglet dédié ; certains
+5. Le maître du jeu accorde 3 min, 10 min, ou refuse.
+6. Les espions reçoivent aussitôt l'alerte « Vous êtes repérés » sur leur téléphone.
+7. Les jokers s'utilisent depuis l'onglet **Jokers** de chaque équipe.
+8. Les espionnés remplissent leurs **défis** depuis leur onglet dédié ; certains
    demandent une photo, prise et envoyée depuis le téléphone.
-7. Le maître du jeu suit le chrono de 5 h et peut, à tout moment, ouvrir ou couper un
+9. Le maître du jeu suit le chrono de 5 h et peut, à tout moment, ouvrir ou couper un
    accès, immobiliser une équipe 30 s ou 2 min (la règle « rester figé 30 secondes après
    avoir envoyé sa position »), écrire aux équipes, **mettre la partie en pause** ou la
    réinitialiser.
+
+## Entrer dans la partie et la lancer
+
+Un code ne suffit pas à entrer : le joueur qui se connecte arrive dans une **salle
+d'attente**, et le maître du jeu doit l'admettre depuis son onglet **Validations**.
+Tant qu'il n'est pas admis, sa position n'est ni enregistrée ni diffusée — utile pour
+que les joueurs puissent se connecter à l'avance sans rien dévoiler.
+
+La partie elle-même ne démarre pas toute seule. Depuis **Contrôle**, le maître du jeu
+choisit la durée du décompte (5 s, 10 s, 30 s ou 1 minute) et lance le départ : un
+compte à rebours plein écran s'affiche sur tous les appareils, avec un bip à chaque
+seconde et un son grave au top départ. Le chrono de la partie ne commence qu'à ce
+moment-là.
 
 ## Les défis
 
@@ -199,8 +217,9 @@ déconnexion).
 
 Trois fonds, le bouton calques (en haut à droite) les enchaîne :
 
-1. **Plan sombre** (par défaut) — assorti à l'interface, façon plan de nuit.
-2. **Plan détaillé** — celui qui affiche le plus de commerces et de noms de rues.
+1. **Plan OpenStreetMap** (par défaut) — celui qui affiche le plus de commerces et de
+   noms de rues.
+2. **Plan sombre** — assorti à l'interface, façon plan de nuit.
 3. **Satellite** — imagerie Esri avec les libellés.
 
 Sans aucune clé, l'app utilise les tuiles **OpenStreetMap** : elles ne demandent rien,

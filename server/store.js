@@ -278,9 +278,11 @@ function defaultState() {
     devices: {},
     game: {
       settings,
-      status: 'running',
-      startedAt: Date.now(),
-      endsAt: Date.now() + settings.durationMin * 60 * 1000,
+      // La partie attend le maître du jeu : 'lobby' → 'countdown' → 'running'.
+      status: 'lobby',
+      startedAt: null,
+      startsAt: null,
+      endsAt: null,
       // Per-team window during which that team can see the opposite team live.
       reveals: { spy: { until: 0, grantedBy: null }, spied: { until: 0, grantedBy: null } },
       // Per-team window during which that team CANNOT be granted any reveal.
@@ -312,6 +314,7 @@ function ensureShape(state) {
   merged.game.pausedAt = (state.game || {}).pausedAt || null;
   merged.game.pauseMessage = (state.game || {}).pauseMessage || null;
   merged.game.endsAt = (state.game || {}).endsAt || base.game.endsAt;
+  merged.game.startsAt = (state.game || {}).startsAt || null;
   merged.game.pins = (state.game || {}).pins || [];
   merged.game.effects = (state.game || {}).effects || [];
   merged.push = Object.assign({}, base.push, state.push || {});
