@@ -442,7 +442,34 @@ function findChallenge(id) {
   return store.get().game.challenges.find((c) => c.id === id);
 }
 
-function completeChallenge(session, id, photoFile) {
+/** Les coéquipiers d'une équipe, d'après les codes distribués. */
+function teamMembers(team) {
+  const s = store.get();
+  return Object.entries(s.codes)
+    .filter(([, c]) => c.role === 'player' && c.team === team)
+    .map(([code, c]) => ({ code, label: c.label }));
+}
+
+function checkAnswer(challenge, answer) {
+  if (!challenge.answer) return null;
+
+  if (challenge.answer === 'ranking') {
+    const names = Array.isArray(answer) ? answer.map((x) => String(x).trim()).filter(Boolean) : [];
+    if (names.length < 2) throw new Error('Indiquez le classement complet.');
+    if (new Set(names).size !== names.length) throw new Error('Un joueur apparaît deux fois dans le classement.');
+    const roster = teamMembers(challenge.team).map((m) => m.label);
+    for (const name of names) {
+      if (!roster.includes(name)) throw new Error(`« ${name} » ne fait pas partie de votre équipe.`);
+    }
+    return names;
+  }
+
+  const text = String(answer || '').trim().slice(0, 300);
+  if (!text) throw new Error('Ce défi demande une réponse.');
+  return text;
+}
+
+function completeChallenge(session, id, photoFile, answer) {
   assertRunning();
   const challenge = findChallenge(id);
   if (!challenge) throw new Error('Défi inconnu.');
@@ -451,11 +478,13 @@ function completeChallenge(session, id, photoFile) {
   }
   if (challenge.done) throw new Error('Ce défi est déjà validé.');
   if (challenge.photo && !photoFile) throw new Error('Ce défi demande une photo.');
+  const answerValue = checkAnswer(challenge, answer);
 
   challenge.done = true;
   challenge.doneAt = now();
   challenge.doneBy = session.label;
   challenge.photoFile = photoFile || null;
+  challenge.answerValue = answerValue;
   addEvent('challenge', `${teamName(challenge.team)} valident « ${challenge.title} »`, { scope: 'all' });
   store.save();
   return challenge;
@@ -470,6 +499,7 @@ function resetChallenge(id, by) {
   challenge.doneAt = null;
   challenge.doneBy = null;
   challenge.photoFile = null;
+  challenge.answerValue = null;
   addEvent('challenge', `« ${challenge.title} » repasse en non fait (${by})`, { scope: 'all' });
   store.save();
   return challenge;
@@ -486,6 +516,11 @@ function visibleChallenges(session) {
       ? c
       : { id: c.id, team: c.team, title: c.title, done: c.done, doneAt: c.doneAt, photo: c.photo }
   );
+}
+
+/** Le joueur a besoin des noms de son équipe pour remplir un classement. */
+function teammatesFor(session) {
+  return session.role === 'player' ? teamMembers(session.team) : [];
 }
 
 /* ------------------------------------------------------------------- clock */
@@ -547,6 +582,7 @@ function snapshotFor(session) {
 
   if (session.role === 'player') {
     base.myRequests = s.requests.filter((r) => r.team === session.team).slice(0, 12);
+    base.teammates = teammatesFor(session);
   }
   if (session.role === 'admin' || session.role === 'viewer') {
     base.requests = s.requests.slice(0, 40);
@@ -585,6 +621,7 @@ module.exports = {
   playJoker,
   completeChallenge,
   resetChallenge,
+  teamMembers,
   findChallenge,
   pauseGame,
   resumeGame,
