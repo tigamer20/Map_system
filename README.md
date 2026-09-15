@@ -169,9 +169,10 @@ que les joueurs puissent se connecter à l'avance sans rien dévoiler.
 
 La partie elle-même ne démarre pas toute seule. Depuis **Contrôle**, le maître du jeu
 choisit la durée du décompte (5 s, 10 s, 30 s ou 1 minute) et lance le départ : un
-compte à rebours plein écran s'affiche sur tous les appareils, avec un bip à chaque
-seconde et un son grave au top départ. Le chrono de la partie ne commence qu'à ce
-moment-là.
+compte à rebours plein écran s'affiche sur tous les appareils, avec un tic feutré par
+seconde et un accord au top départ. Le maître du jeu garde un bouton **Annuler le
+décompte** tant qu'il n'est pas écoulé. Le chrono de la partie ne commence qu'à la fin
+du décompte.
 
 ## Les défis
 

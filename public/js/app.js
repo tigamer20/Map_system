@@ -57,7 +57,7 @@
   let reconnectDelay = 1000;
   let interactionUntil = 0;
   const pendingPhotos = {};
-  let dernierBip = null;
+  let dernierTic = null;
   let etaitAdmis = null;
 
   const now = () => Date.now() + serverOffset;
@@ -160,25 +160,34 @@
     return audioCtx;
   }
 
-  /** Un bip net : aigu et court pour le décompte, plus grave et long au départ. */
-  function bip(frequence, duree, volume) {
+  /**
+   * Une note sinusoïdale à attaque douce : sans arête, contrairement à l'onde
+   * carrée qui perçait les oreilles.
+   */
+  function note(frequence, retard, duree, volume) {
     try {
       const ctx = audio();
-      const debut = ctx.currentTime;
+      const t = ctx.currentTime + retard;
       const osc = ctx.createOscillator();
       const gain = ctx.createGain();
-      osc.type = 'square';
-      osc.frequency.setValueAtTime(frequence, debut);
-      gain.gain.setValueAtTime(0.0001, debut);
-      gain.gain.exponentialRampToValueAtTime(volume || 0.25, debut + 0.02);
-      gain.gain.exponentialRampToValueAtTime(0.0001, debut + duree);
+      osc.type = 'sine';
+      osc.frequency.setValueAtTime(frequence, t);
+      gain.gain.setValueAtTime(0.0001, t);
+      gain.gain.exponentialRampToValueAtTime(volume, t + 0.05);
+      gain.gain.exponentialRampToValueAtTime(0.0001, t + duree);
       osc.connect(gain).connect(ctx.destination);
-      osc.start(debut);
-      osc.stop(debut + duree + 0.05);
+      osc.start(t);
+      osc.stop(t + duree + 0.05);
     } catch (err) {
       /* le son reste un bonus */
     }
   }
+
+  /** Tic feutré du décompte. */
+  const ticDoux = () => note(587.33, 0, 0.35, 0.06);
+
+  /** Accord majeur arpégé au top départ, chaleureux plutôt que strident. */
+  const coupDEnvoi = () => [523.25, 659.25, 783.99].forEach((f, i) => note(f, i * 0.08, 1.2, 0.05));
 
   function chime() {
     try {
@@ -245,6 +254,15 @@
         .catch(() => {});
     }
   }
+
+  el('countCancel').addEventListener('click', async () => {
+    try {
+      await api('/api/admin/clock', { method: 'POST', body: JSON.stringify({ action: 'cancel' }) });
+      toast('Décompte annulé.', 'ok');
+    } catch (err) {
+      toast(err.message, 'error');
+    }
+  });
 
   el('alertDismiss').addEventListener('click', () => {
     ui.alertLayer.hidden = true;
@@ -1196,7 +1214,7 @@
       waitLayer.hidden = true;
     }
 
-    // Décompte d'avant-partie, avec un bip par seconde.
+    // Décompte d'avant-partie : un tic feutré par seconde, un accord au départ.
     const countLayer = el('countLayer');
     if (snapshot.game.status === 'countdown' && snapshot.game.startsAt) {
       const reste = Math.max(0, Math.ceil((snapshot.game.startsAt - now()) / 1000));
@@ -1204,14 +1222,16 @@
       el('countTitle').textContent = reste ? 'La partie commence' : 'C\'est parti !';
       el('countBody').textContent = reste ? 'Tenez-vous prêts.' : 'Bonne chasse.';
       countLayer.hidden = false;
-      if (reste !== dernierBip) {
-        dernierBip = reste;
-        if (reste > 0) bip(880, 0.12);
-        else bip(440, 0.7, 0.35);
+      const annuler = el('countCancel');
+      annuler.hidden = me.role !== 'admin';
+      if (reste !== dernierTic) {
+        dernierTic = reste;
+        if (reste > 0) ticDoux();
+        else coupDEnvoi();
       }
     } else {
       countLayer.hidden = true;
-      dernierBip = null;
+      dernierTic = null;
     }
 
     const paused = snapshot.game.status === 'paused';
