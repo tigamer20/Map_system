@@ -248,6 +248,7 @@
   }
 
   function sendPosition(position) {
+    lastSent = Date.now();
     const payload = {
       t: 'pos',
       lat: position.coords.latitude,
@@ -278,10 +279,7 @@
         gameMap.setAccuracy(point.lng, point.lat, coords.accuracy);
         gameMap.followTo(point.lng, point.lat);
 
-        if (moved || Date.now() - lastSent > 4000) {
-          lastSent = Date.now();
-          sendPosition(position);
-        }
+        if (moved || Date.now() - lastSent > 4000) sendPosition(position);
         setStatus(`GPS ±${Math.round(coords.accuracy)} m`, 'live');
       },
       (err) => {
@@ -300,6 +298,21 @@
     setInterval(() => {
       if (lastFix) sendPosition(lastFix);
     }, 8000);
+
+    // iOS et Android gèlent le GPS d'un onglet en arrière-plan : au retour, on
+    // redemande un point immédiatement plutôt que d'attendre le prochain battement.
+    document.addEventListener('visibilitychange', () => {
+      if (document.visibilityState !== 'visible') return;
+      navigator.geolocation.getCurrentPosition(
+        (position) => {
+          myPosition = { lat: position.coords.latitude, lng: position.coords.longitude, accuracy: position.coords.accuracy };
+          lastFix = position;
+          sendPosition(position);
+        },
+        () => {},
+        { enableHighAccuracy: true, maximumAge: 10000, timeout: 15000 }
+      );
+    });
 
     keepAwake();
   }
@@ -458,6 +471,12 @@
       const reveal = snapshot.game.reveals[me.team];
       const remaining = reveal.until - now();
       const other = me.team === 'spy' ? 'spied' : 'spy';
+      const silence = Date.now() - lastSent;
+      if (lastSent && silence > 45000) {
+        html += `<div class="card alertish"><div class="card-title">Votre position ne part plus</div>
+          <div class="card-sub">Dernier envoi ${fmtAgo(now() - silence)}. Gardez l'application ouverte à l'écran :
+          iPhone comme Android coupent le GPS d'une application passée en arrière-plan ou écran verrouillé.</div></div>`;
+      }
       if (me.seesAlways && !snapshot.jammed) {
         html += `<div class="card accent"><div class="card-title">Vision permanente</div>
           <div class="card-sub">Vous voyez les ${TEAM_ONE[other]} sur la carte en continu, sans rien demander.</div></div>`;
