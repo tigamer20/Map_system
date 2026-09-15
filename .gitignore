@@ -3,6 +3,6 @@ data/
 *.log
 npm-debug.log*
 
-# Local overrides — copy the .example files and edit
-config/codes.json.example
-config/jokers.json.example
+# Rien n'est ignoré dans config/ : ces fichiers doivent pouvoir être versionnés,
+# sinon ils n'arrivent jamais sur l'hébergeur. Pour garder des codes privés d'un
+# dépôt public, utilisez plutôt la variable d'environnement ACCESS_CODES.

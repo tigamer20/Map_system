@@ -244,16 +244,42 @@ function codesFromEnv() {
   return Object.keys(valid).length ? valid : null;
 }
 
-function defaultCodes() {
-  const fromEnv = codesFromEnv();
-  if (fromEnv) return fromEnv;
+/**
+ * D'où viennent les codes, dans l'ordre : le fichier config/codes.json s'il existe
+ * (c'est un choix explicite), puis ACCESS_CODES, puis un tirage aléatoire.
+ * La source est toujours annoncée au démarrage : rien ne doit se décider en silence.
+ */
+let avertiSurDoublon = false;
 
+function resolveCodes() {
   const custom = readConfig('codes.json');
   if (custom && Object.keys(custom).length) {
     const valid = normalizeCodes(custom, 'config/codes.json');
-    if (Object.keys(valid).length) return valid;
+    if (Object.keys(valid).length) {
+      if (process.env.ACCESS_CODES && !avertiSurDoublon) {
+        avertiSurDoublon = true;
+        console.warn('[store] config/codes.json ET ACCESS_CODES sont présents : le fichier gagne.');
+      }
+      return { codes: valid, source: 'config/codes.json' };
+    }
   }
 
+  const fromEnv = codesFromEnv();
+  if (fromEnv) return { codes: fromEnv, source: 'ACCESS_CODES' };
+
+  return { codes: randomCodes(), source: 'tirage aléatoire' };
+}
+
+/** Signature d'un jeu de codes, pour repérer qu'un fichier a changé depuis. */
+function signature(value) {
+  return crypto.createHash('sha1').update(JSON.stringify(value)).digest('hex').slice(0, 12);
+}
+
+function defaultCodes() {
+  return resolveCodes().codes;
+}
+
+function randomCodes() {
   const taken = new Set();
   const codes = {};
   const add = (role, team, label) => {
@@ -271,10 +297,17 @@ function defaultCodes() {
 
 function defaultState() {
   const settings = defaultSettings();
+  const resolved = resolveCodes();
+  const jokers = defaultJokers();
+  const challenges = defaultChallenges();
   return {
     version: 2,
     createdAt: Date.now(),
-    codes: defaultCodes(),
+    codes: resolved.codes,
+    codesSource: resolved.source,
+    codesSignature: signature(resolved.codes),
+    jokersSignature: signature(jokers),
+    challengesSignature: signature(challenges),
     devices: {},
     game: {
       settings,
@@ -291,8 +324,8 @@ function defaultState() {
       pins: [],
       // Timed constraints shown to a team: [{id, team, label, until}]
       effects: [],
-      jokers: defaultJokers(),
-      challenges: defaultChallenges(),
+      jokers,
+      challenges,
       pausedAt: null,
       pauseMessage: null
     },
@@ -328,6 +361,53 @@ function ensureShape(state) {
 let state = null;
 let saveTimer = null;
 
+/**
+ * Un fichier de config modifié après la première partie n'était jamais relu :
+ * on compare sa signature à celle enregistrée et on l'applique s'il a changé.
+ */
+function applyConfigChanges(state) {
+  const resolved = resolveCodes();
+  const applied = [];
+
+  if (resolved.source !== 'tirage aléatoire') {
+    const sig = signature(resolved.codes);
+    if (state.codesSignature !== sig) {
+      // Les joueurs déjà admis le restent si leur code existe toujours.
+      for (const [code, entry] of Object.entries(resolved.codes)) {
+        const ancien = state.codes[code];
+        if (ancien && ancien.admitted) entry.admitted = true;
+      }
+      state.codes = resolved.codes;
+      state.codesSignature = sig;
+      applied.push(`codes (${Object.keys(resolved.codes).length}) depuis ${resolved.source}`);
+    }
+    state.codesSource = resolved.source;
+  }
+
+  const jokers = defaultJokers();
+  const jokersSig = signature(jokers);
+  if (state.jokersSignature && state.jokersSignature !== jokersSig) {
+    state.game.jokers = jokers;
+    state.jokersSignature = jokersSig;
+    applied.push('jokers');
+  } else if (!state.jokersSignature) {
+    state.jokersSignature = jokersSig;
+  }
+
+  const challenges = defaultChallenges();
+  const challengesSig = signature(challenges);
+  if (state.challengesSignature && state.challengesSignature !== challengesSig) {
+    state.game.challenges = challenges;
+    state.challengesSignature = challengesSig;
+    applied.push('défis');
+  } else if (!state.challengesSignature) {
+    state.challengesSignature = challengesSig;
+  }
+
+  if (applied.length) console.log(`[store] config modifiée, rechargée : ${applied.join(', ')}`);
+  return state;
+}
+
 function load() {
   fs.mkdirSync(DATA_DIR, { recursive: true });
   if (fs.existsSync(STATE_FILE)) {
@@ -340,6 +420,7 @@ function load() {
   } else {
     state = defaultState();
   }
+  applyConfigChanges(state);
   save(true);
   return state;
 }
@@ -382,6 +463,7 @@ function resetGame() {
 module.exports = {
   get,
   load,
+  resolveCodes,
   save,
   resetGame,
   defaultState,

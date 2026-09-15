@@ -84,11 +84,17 @@ VAPID_PRIVATE_KEY <voir ci-dessous>
 MAPTILER_KEY      <optionnel>
 ```
 
-`ACCESS_CODES` est essentiel sur Render : le disque est remis à zéro à chaque
-redéploiement, donc sans cette variable l'app tire de **nouveaux codes aléatoires** à
-chaque redémarrage. Format `code:rôle:nom`, séparés par des virgules — le rôle est
-`spy`, `spied`, `admin` ou `viewer`. Gardez ces codes dans Render et pas dans le dépôt :
-un dépôt public rendrait vos codes publics.
+Deux façons de fixer vos codes, au choix :
+
+- **`config/codes.json` dans le dépôt** — le plus simple, et ce fichier passe devant
+  tout le reste. Il est relu à chaque redémarrage, donc une modification s'applique au
+  redéploiement suivant. À éviter si votre dépôt est public : vos codes le seraient aussi.
+- **La variable `ACCESS_CODES`** — format `code:rôle:nom` séparés par des virgules, avec
+  `spy`, `spied`, `admin` ou `viewer` comme rôle. Elle sert de repli quand le fichier
+  n'existe pas, et garde les codes hors du dépôt.
+
+Sans l'un ni l'autre, l'app tire des codes au hasard. Le serveur annonce toujours la
+source retenue dans ses logs de démarrage.
 
 Pour les notifications push, générez une paire de clés une fois et collez-la dans Render :
 
