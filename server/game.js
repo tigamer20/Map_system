@@ -39,10 +39,41 @@ function addEvent(kind, text, opts = {}) {
 
 /* --------------------------------------------------------------- positions */
 
+function metersBetween(a, b) {
+  const R = 6371000;
+  const toRad = (d) => (d * Math.PI) / 180;
+  const dLat = toRad(b.lat - a.lat);
+  const dLng = toRad(b.lng - a.lng);
+  const h =
+    Math.sin(dLat / 2) ** 2 +
+    Math.cos(toRad(a.lat)) * Math.cos(toRad(b.lat)) * Math.sin(dLng / 2) ** 2;
+  return 2 * R * Math.asin(Math.sqrt(h));
+}
+
+/**
+ * iOS ne renseigne presque jamais `coords.speed` : on la recalcule à partir de
+ * deux positions successives quand le téléphone ne la donne pas.
+ */
+function derivedSpeed(previous, pos, moment) {
+  if (!previous) return null;
+  const seconds = (moment - previous.ts) / 1000;
+  if (seconds < 1 || seconds > 60) return null;
+  const meters = metersBetween(previous, pos);
+  // Sous 5 m, c'est du bruit GPS ; au-dessus de 60 m/s, c'est un saut de position.
+  if (meters < 5) return 0;
+  const speed = meters / seconds;
+  return speed > 60 ? null : speed;
+}
+
 function setPosition(code, pos) {
   const s = store.get();
   const entry = s.codes[code];
-  if (!entry || entry.role !== 'player') return null;
+  if (!entry || entry.role !== 'player' || !entry.admitted) return null;
+
+  const moment = now();
+  const previous = positions.get(code);
+  const reported = pos.speed == null || pos.speed < 0 ? null : pos.speed;
+
   positions.set(code, {
     code,
     name: entry.label,
@@ -51,8 +82,8 @@ function setPosition(code, pos) {
     lng: pos.lng,
     accuracy: pos.accuracy == null ? null : pos.accuracy,
     heading: pos.heading == null ? null : pos.heading,
-    speed: pos.speed == null ? null : pos.speed,
-    ts: now()
+    speed: reported != null ? reported : derivedSpeed(previous, pos, moment),
+    ts: moment
   });
   return positions.get(code);
 }
@@ -195,7 +226,21 @@ function decideRequest(requestId, approve, options = {}) {
   const notify = [];
 
   if (!approve) {
-    if (request.type === 'challenge') {
+    if (request.type === 'join') {
+    const entry = s.codes[request.code];
+    if (entry) {
+      entry.admitted = true;
+      addEvent('join', `${entry.label} entre dans la partie`, { scope: 'all' });
+      notify.push({
+        team: request.team,
+        title: 'Vous êtes dans la partie',
+        body: `${entry.label} a été admis par le maître du jeu.`,
+        kind: 'granted'
+      });
+    }
+  }
+
+  if (request.type === 'challenge') {
       const challenge = findChallenge(request.payload.challengeId);
       if (challenge) {
         challenge.pending = false;
@@ -242,6 +287,20 @@ function decideRequest(requestId, approve, options = {}) {
           : `Suivi en direct pendant ${minutes} minutes.`,
       kind: 'granted'
     });
+  }
+
+  if (request.type === 'join') {
+    const entry = s.codes[request.code];
+    if (entry) {
+      entry.admitted = true;
+      addEvent('join', `${entry.label} entre dans la partie`, { scope: 'all' });
+      notify.push({
+        team: request.team,
+        title: 'Vous êtes dans la partie',
+        body: `${entry.label} a été admis par le maître du jeu.`,
+        kind: 'granted'
+      });
+    }
   }
 
   if (request.type === 'challenge') {
@@ -423,6 +482,49 @@ function playJoker(team, jokerId, options = {}) {
   return notify;
 }
 
+/* -------------------------------------------------------------- admission */
+
+/** Un joueur n'entre pas dans la partie tant que le maître du jeu ne l'a pas admis. */
+function isAdmitted(session) {
+  if (session.role !== 'player') return true;
+  return store.get().codes[session.code].admitted === true;
+}
+
+/** Appelé à chaque connexion : crée la demande d'admission si besoin. */
+function requestAdmission(session) {
+  const s = store.get();
+  if (isAdmitted(session)) return null;
+  const existing = s.requests.find(
+    (r) => r.status === 'pending' && r.type === 'join' && r.code === session.code
+  );
+  if (existing) return existing;
+
+  const request = {
+    id: id(),
+    type: 'join',
+    team: session.team,
+    code: session.code,
+    from: session.label,
+    payload: {},
+    status: 'pending',
+    createdAt: now(),
+    decidedAt: null,
+    decidedBy: null,
+    note: null
+  };
+  s.requests.unshift(request);
+  addEvent('join', `${session.label} demande à rejoindre la partie`, { scope: 'all' });
+  store.save();
+  return request;
+}
+
+function admittedPlayers() {
+  const s = store.get();
+  return Object.entries(s.codes)
+    .filter(([, c]) => c.role === 'player' && c.admitted)
+    .map(([code]) => code);
+}
+
 /* ------------------------------------------------------------------ pause */
 
 function isPaused() {
@@ -431,7 +533,9 @@ function isPaused() {
 
 /** Rien ne doit avancer pendant une pause : ni demande, ni joker, ni défi. */
 function assertRunning() {
-  if (isPaused()) throw new Error('La partie est en pause.');
+  const status = store.get().game.status;
+  if (status === 'paused') throw new Error('La partie est en pause.');
+  if (status === 'lobby' || status === 'countdown') throw new Error("La partie n'a pas encore commencé.");
 }
 
 function pauseGame(message) {
@@ -589,14 +693,32 @@ function teammatesFor(session) {
 
 /* ------------------------------------------------------------------- clock */
 
+/** Lance le décompte d'avant-partie ; la partie démarre à son terme. */
+function startCountdown(seconds, minutes) {
+  const s = store.get();
+  if (s.game.status === 'countdown') throw new Error('Le décompte est déjà lancé.');
+  const duration = Number(minutes) > 0 ? Number(minutes) : s.game.settings.durationMin;
+  const delay = Math.min(60, Math.max(3, Number(seconds) || 10));
+  s.game.settings.durationMin = duration;
+  s.game.status = 'countdown';
+  s.game.startsAt = now() + delay * 1000;
+  s.game.startedAt = null;
+  s.game.endsAt = null;
+  addEvent('clock', `Départ dans ${delay} secondes`, { scope: 'all' });
+  store.save();
+  return delay;
+}
+
+/** Bascule réellement en partie : appelé au terme du décompte. */
 function startClock(minutes) {
   const s = store.get();
   const duration = Number(minutes) > 0 ? Number(minutes) : s.game.settings.durationMin;
   s.game.settings.durationMin = duration;
   s.game.status = 'running';
+  s.game.startsAt = null;
   s.game.startedAt = now();
   s.game.endsAt = now() + duration * 60 * 1000;
-  addEvent('clock', `La partie démarre pour ${Math.round(duration / 60)} h`, { scope: 'all' });
+  addEvent('clock', `La partie commence — ${Math.round(duration / 60)} h`, { scope: 'all' });
   store.save();
 }
 
@@ -621,12 +743,14 @@ function snapshotFor(session) {
       team: session.team,
       label: session.label,
       isHunter: session.role === 'player' ? session.team === hunters : false,
+      admitted: isAdmitted(session),
       seesAlways: session.role === 'player' ? hasPermanentReveal(session.team) : false,
       seenAlways: session.role === 'player' ? hasPermanentReveal(otherTeam(session.team)) : false
     },
     game: {
       status: s.game.status,
       startedAt: s.game.startedAt,
+      startsAt: s.game.startsAt,
       endsAt: s.game.endsAt,
       pausedAt: s.game.pausedAt,
       pauseMessage: s.game.pauseMessage,
@@ -658,6 +782,7 @@ function snapshotFor(session) {
         role: c.role,
         team: c.team,
         label: c.label,
+        admitted: c.role === 'player' ? c.admitted === true : true,
         online: positions.has(code) ? now() - positions.get(code).ts < POSITION_STALE_MS : false
       }))
       .sort(
@@ -691,7 +816,11 @@ module.exports = {
   resumeGame,
   isPaused,
   startClock,
+  startCountdown,
   stopClock,
+  isAdmitted,
+  requestAdmission,
+  admittedPlayers,
   canSeeOpponents,
   hasPermanentReveal,
   isBlocked,

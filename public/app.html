@@ -50,6 +50,23 @@
 
   <div class="toast-layer" id="toasts"></div>
 
+  <div class="alert-layer" id="waitLayer" hidden>
+    <div class="alert-box">
+      <div class="icon">⏳</div>
+      <h3>En attente du maître du jeu</h3>
+      <p id="waitMessage"></p>
+      <div class="card-sub">Vous entrerez sur la carte dès qu'il vous aura accepté.</div>
+    </div>
+  </div>
+
+  <div class="alert-layer" id="countLayer" hidden>
+    <div class="alert-box">
+      <div class="countdown-number" id="countNumber">10</div>
+      <h3 id="countTitle">La partie commence</h3>
+      <p id="countBody">Tenez-vous prêts.</p>
+    </div>
+  </div>
+
   <div class="alert-layer" id="pauseLayer" hidden>
     <div class="alert-box">
       <div class="icon">⏸️</div>

@@ -11,6 +11,14 @@
     return;
   }
 
+  // Session encore valable côté serveur (cookie) mais localStorage vidé par Safari.
+  fetch('/api/me')
+    .then((r) => (r.ok ? r.json() : null))
+    .then((me) => {
+      if (me && me.token) location.replace('/app');
+    })
+    .catch(() => {});
+
   fetch('/api/config')
     .then((r) => r.json())
     .then((cfg) => {
@@ -79,6 +87,7 @@
       localStorage.setItem('spymap.role', data.role);
       localStorage.setItem('spymap.team', data.team || '');
       localStorage.setItem('spymap.label', data.label);
+      localStorage.setItem('spymap.lastCode', code);
       location.replace('/app');
     } catch (err) {
       errorBox.textContent = err.message;
@@ -89,4 +98,17 @@
       submitBtn.textContent = 'Rejoindre la partie';
     }
   });
+  // Lien personnel : /?c=12345 connecte directement, pratique pour distribuer un code
+  // par joueur. À défaut, on repropose le dernier code utilisé sur cet appareil.
+  // Ce bloc vient après l'écouteur de soumission, sinon requestSubmit() ne déclenche rien.
+  const depuisLien = (new URLSearchParams(location.search).get('c') || '').replace(/\D/g, '');
+  const dernier = localStorage.getItem('spymap.lastCode') || '';
+  const prerempli = depuisLien.length === 5 ? depuisLien : dernier.length === 5 ? dernier : '';
+  if (prerempli) {
+    prerempli.split('').forEach((d, i) => {
+      if (inputs[i]) inputs[i].value = d;
+    });
+    refresh();
+    if (depuisLien.length === 5) form.requestSubmit();
+  }
 })();

@@ -2,10 +2,25 @@
 (function () {
   'use strict';
 
-  const token = localStorage.getItem('spymap.token');
-  if (!token) {
-    location.replace('/');
-    return;
+  let token = localStorage.getItem('spymap.token');
+
+  /** Safari peut vider le localStorage : le cookie de session permet de revenir. */
+  async function recoverSession() {
+    if (token) return true;
+    try {
+      const res = await fetch('/api/me');
+      if (!res.ok) return false;
+      const me = await res.json();
+      if (!me.token) return false;
+      token = me.token;
+      localStorage.setItem('spymap.token', me.token);
+      localStorage.setItem('spymap.role', me.role);
+      localStorage.setItem('spymap.team', me.team || '');
+      localStorage.setItem('spymap.label', me.label);
+      return true;
+    } catch (err) {
+      return false;
+    }
   }
 
   const el = (id) => document.getElementById(id);
@@ -42,6 +57,8 @@
   let reconnectDelay = 1000;
   let interactionUntil = 0;
   const pendingPhotos = {};
+  let dernierBip = null;
+  let etaitAdmis = null;
 
   const now = () => Date.now() + serverOffset;
 
@@ -136,20 +153,46 @@
   /* ---------------------------------------------------------------- alerts */
 
   let audioCtx = null;
+
+  function audio() {
+    audioCtx = audioCtx || new (window.AudioContext || window.webkitAudioContext)();
+    if (audioCtx.state === 'suspended') audioCtx.resume();
+    return audioCtx;
+  }
+
+  /** Un bip net : aigu et court pour le décompte, plus grave et long au départ. */
+  function bip(frequence, duree, volume) {
+    try {
+      const ctx = audio();
+      const debut = ctx.currentTime;
+      const osc = ctx.createOscillator();
+      const gain = ctx.createGain();
+      osc.type = 'square';
+      osc.frequency.setValueAtTime(frequence, debut);
+      gain.gain.setValueAtTime(0.0001, debut);
+      gain.gain.exponentialRampToValueAtTime(volume || 0.25, debut + 0.02);
+      gain.gain.exponentialRampToValueAtTime(0.0001, debut + duree);
+      osc.connect(gain).connect(ctx.destination);
+      osc.start(debut);
+      osc.stop(debut + duree + 0.05);
+    } catch (err) {
+      /* le son reste un bonus */
+    }
+  }
+
   function chime() {
     try {
-      audioCtx = audioCtx || new (window.AudioContext || window.webkitAudioContext)();
-      if (audioCtx.state === 'suspended') audioCtx.resume();
-      const start = audioCtx.currentTime;
+      const ctx = audio();
+      const start = ctx.currentTime;
       [0, 0.22, 0.44].forEach((offset, i) => {
-        const osc = audioCtx.createOscillator();
-        const gain = audioCtx.createGain();
+        const osc = ctx.createOscillator();
+        const gain = ctx.createGain();
         osc.type = 'sine';
         osc.frequency.setValueAtTime([784, 988, 1319][i], start + offset);
         gain.gain.setValueAtTime(0.0001, start + offset);
         gain.gain.exponentialRampToValueAtTime(0.28, start + offset + 0.02);
         gain.gain.exponentialRampToValueAtTime(0.0001, start + offset + 0.3);
-        osc.connect(gain).connect(audioCtx.destination);
+        osc.connect(gain).connect(ctx.destination);
         osc.start(start + offset);
         osc.stop(start + offset + 0.32);
       });
@@ -457,7 +500,7 @@
         <div class="meta">
           ${dist != null && !isMe ? `<span>Distance <b>${fmtDistance(dist)}</b></span>` : ''}
           ${player.accuracy != null ? `<span>Précision <b>±${Math.round(player.accuracy)} m</b></span>` : ''}
-          ${player.speed ? `<span>Vitesse <b>${(player.speed * 3.6).toFixed(1)} km/h</b></span>` : ''}
+          ${player.speed != null ? `<span>Vitesse <b>${(player.speed * 3.6).toFixed(1)} km/h</b></span>` : ''}
         </div>
       </div>`;
   }
@@ -799,10 +842,19 @@
               r.type === 'challenge'
                 ? (snapshot.challenges || []).find((c) => c.id === r.payload.challengeId)
                 : null;
-            const titre = challenge ? challenge.title : joker ? joker.name : 'Localisation';
+            const entree = r.type === 'join';
+            const titre = entree
+              ? `${r.from} veut entrer dans la partie`
+              : challenge
+              ? challenge.title
+              : joker
+              ? joker.name
+              : 'Localisation';
 
             let corps = '';
-            if (challenge) {
+            if (entree) {
+              corps = `<div class="req"><b>Code utilisé</b>${escapeHtml(r.code)} · ${TEAM[r.team]}</div>`;
+            } else if (challenge) {
               corps = `${challenge.description ? `<div class="req"><b>Le défi</b>${escapeHtml(challenge.description)}</div>` : ''}
                 ${answerLine(challenge)}
                 ${
@@ -817,7 +869,9 @@
             }
 
             let boutons = '';
-            if (challenge) {
+            if (entree) {
+              boutons = `<button class="btn small" data-decide="${r.id}" data-approve="1">Admettre</button>`;
+            } else if (challenge) {
               boutons = `<button class="btn small" data-decide="${r.id}" data-approve="1">Accepter le défi</button>`;
             } else if (joker) {
               boutons = `<button class="btn small" data-decide="${r.id}" data-approve="1">Valider le défi</button>`;
@@ -827,8 +881,8 @@
             }
 
             return `<div class="card ${r.team}">
-              <div class="card-title">${TEAM[r.team]} · ${escapeHtml(titre)}</div>
-              <div class="card-sub">Envoyé par ${escapeHtml(r.from)} à ${fmtTime(r.createdAt)}</div>
+              <div class="card-title">${entree ? escapeHtml(titre) : `${TEAM[r.team]} · ${escapeHtml(titre)}`}</div>
+              <div class="card-sub">${entree ? 'Connecté' : 'Envoyé par ' + escapeHtml(r.from)} à ${fmtTime(r.createdAt)}</div>
               ${corps}
               <div class="card-actions">
                 ${boutons}
@@ -846,7 +900,7 @@
           .map(
             (r) => `<div class="event"><time>${fmtTime(r.decidedAt || r.createdAt)}</time>
               <span class="kind ${r.status === 'denied' ? 'denied' : 'request'}"></span>
-              <span>${TEAM[r.team]} · ${{ unlock: 'joker', challenge: 'défi', location: 'localisation' }[r.type] || r.type} · <b>${label[r.status] || r.status}</b></span></div>`
+              <span>${TEAM[r.team]} · ${{ unlock: 'joker', challenge: 'défi', location: 'localisation', join: 'entrée' }[r.type] || r.type} · <b>${label[r.status] || r.status}</b></span></div>`
           )
           .join('')
       : '<div class="empty">Aucune décision pour le moment.</div>';
@@ -860,14 +914,33 @@
     let html = '';
 
     if (isAdmin) {
-      const left = g.endsAt - now();
+      const left = g.endsAt ? g.endsAt - now() : g.settings.durationMin * 60 * 1000;
+      const attente = (snapshot.roster || []).filter((e) => e.role === 'player' && !e.admitted).length;
+      const etat =
+        g.status === 'lobby'
+          ? 'Pas encore commencée'
+          : g.status === 'countdown'
+          ? `Départ dans ${Math.max(0, Math.ceil((g.startsAt - now()) / 1000))} s`
+          : g.status === 'ended' || left <= 0
+          ? 'Terminée'
+          : fmtClock(left);
+
       html += `<div class="card accent">
-        <div class="card-title">Chrono — <span class="countdown">${g.status === 'ended' || left <= 0 ? 'terminé' : fmtClock(left)}</span></div>
-        <div class="card-sub">Durée prévue : ${Math.round(g.settings.durationMin / 60)} h. Traqueurs : ${TEAM[hunters]}.</div>
-        <div class="card-actions">
-          <button class="btn small" data-clock="start" data-minutes="${g.settings.durationMin}">Démarrer / relancer</button>
-          <button class="btn ghost small" data-clock="stop">Arrêter</button>
-        </div>
+        <div class="card-title">Partie — <span class="countdown">${etat}</span></div>
+        <div class="card-sub">Durée prévue : ${Math.round(g.settings.durationMin / 60)} h. Traqueurs : ${TEAM[hunters]}.${
+          attente ? ` <b>${attente} joueur(s) en attente d'admission.</b>` : ''
+        }</div>
+        ${
+          g.status === 'lobby' || g.status === 'ended'
+            ? `<div class="field" style="margin-top:10px"><label for="countSeconds">Décompte avant le départ</label>
+                 <select id="countSeconds"><option value="5">5 secondes</option><option value="10" selected>10 secondes</option><option value="30">30 secondes</option><option value="60">1 minute</option></select>
+               </div>
+               <div class="card-actions"><button class="btn small" data-clock="start" data-minutes="${g.settings.durationMin}">Démarrer la partie</button></div>`
+            : `<div class="card-actions">
+                 <button class="btn ghost small" data-clock="start" data-minutes="${g.settings.durationMin}">Relancer</button>
+                 <button class="btn danger small" data-clock="stop">Arrêter</button>
+               </div>`
+        }
       </div>`;
     }
 
@@ -1045,7 +1118,9 @@
       .map(
         (entry) => `<div class="card ${entry.team || ''}">
           <div class="code-pill">${escapeHtml(entry.code)}</div>
-          <div class="card-sub">${escapeHtml(entry.label)} · ${roleLabel[entry.role] || entry.role}${entry.team ? ' · ' + TEAM[entry.team] : ''} · ${entry.online ? 'sur la carte' : 'inactif'}</div>
+          <div class="card-sub">${escapeHtml(entry.label)} · ${roleLabel[entry.role] || entry.role}${entry.team ? ' · ' + TEAM[entry.team] : ''} · ${
+            entry.role === 'player' && !entry.admitted ? 'pas encore admis' : entry.online ? 'sur la carte' : 'inactif'
+          }</div>
           <div class="card-actions">
             <button class="btn ghost small" data-rotate="${entry.code}">Nouveau code</button>
             <button class="btn danger small" data-remove="${entry.code}">Supprimer</button>
@@ -1094,6 +1169,51 @@
       setStatus(`${live} joueur${live === 1 ? '' : 's'} en direct`, live ? 'live' : '');
     }
 
+    // À l'instant de l'admission, on pousse sa position : sans cela le joueur
+    // n'apparaît sur la carte qu'au battement suivant, jusqu'à huit secondes plus tard.
+    if (me.role === 'player' && me.admitted === true && etaitAdmis === false) {
+      if (lastFix) sendPosition(lastFix);
+      else if (navigator.geolocation) {
+        navigator.geolocation.getCurrentPosition(
+          (position) => {
+            lastFix = position;
+            myPosition = { lat: position.coords.latitude, lng: position.coords.longitude, accuracy: position.coords.accuracy };
+            sendPosition(position);
+          },
+          () => {},
+          { enableHighAccuracy: true, maximumAge: 5000, timeout: 15000 }
+        );
+      }
+    }
+    if (me.role === 'player') etaitAdmis = me.admitted;
+
+    // Joueur pas encore admis : rien d'autre à faire qu'attendre.
+    const waitLayer = el('waitLayer');
+    if (me.role === 'player' && me.admitted === false) {
+      el('waitMessage').textContent = `Code reconnu : ${me.label} (${TEAM[me.team]}).`;
+      waitLayer.hidden = false;
+    } else {
+      waitLayer.hidden = true;
+    }
+
+    // Décompte d'avant-partie, avec un bip par seconde.
+    const countLayer = el('countLayer');
+    if (snapshot.game.status === 'countdown' && snapshot.game.startsAt) {
+      const reste = Math.max(0, Math.ceil((snapshot.game.startsAt - now()) / 1000));
+      el('countNumber').textContent = reste || 'GO';
+      el('countTitle').textContent = reste ? 'La partie commence' : 'C\'est parti !';
+      el('countBody').textContent = reste ? 'Tenez-vous prêts.' : 'Bonne chasse.';
+      countLayer.hidden = false;
+      if (reste !== dernierBip) {
+        dernierBip = reste;
+        if (reste > 0) bip(880, 0.12);
+        else bip(440, 0.7, 0.35);
+      }
+    } else {
+      countLayer.hidden = true;
+      dernierBip = null;
+    }
+
     const paused = snapshot.game.status === 'paused';
     const pauseLayer = el('pauseLayer');
     if (paused && me.role !== 'admin') {
@@ -1104,14 +1224,20 @@
     }
 
     // Pendant la pause, le chrono est gelé à l'instant où elle a commencé.
-    const left =
-      paused && snapshot.game.pausedAt
-        ? snapshot.game.endsAt - snapshot.game.pausedAt
-        : snapshot.game.endsAt - now();
+    const left = !snapshot.game.endsAt
+      ? snapshot.game.settings.durationMin * 60 * 1000
+      : paused && snapshot.game.pausedAt
+      ? snapshot.game.endsAt - snapshot.game.pausedAt
+      : snapshot.game.endsAt - now();
     ui.clockChip.hidden = false;
     ui.clockChip.className = `chip clock${left <= 0 || snapshot.game.status === 'ended' ? ' warn' : left < 15 * 60 * 1000 ? ' warn' : ''}`;
+    const etat = snapshot.game.status;
     ui.clockText.textContent =
-      snapshot.game.status === 'ended' || left <= 0
+      etat === 'lobby'
+        ? 'En attente'
+        : etat === 'countdown'
+        ? `Départ dans ${Math.max(0, Math.ceil((snapshot.game.startsAt - now()) / 1000))} s`
+        : etat === 'ended' || left <= 0
         ? 'Partie terminée'
         : paused
         ? `⏸ ${fmtClock(left)}`
@@ -1372,11 +1498,16 @@
 
     body.querySelectorAll('[data-clock]').forEach((node) =>
       node.addEventListener('click', async () => {
-        if (node.dataset.clock === 'start' && !confirm('Relancer le chrono depuis maintenant ?')) return;
+        const secondes = el('countSeconds') ? Number(el('countSeconds').value) : 10;
+        if (node.dataset.clock === 'start' && !confirm(`Lancer le décompte de ${secondes} secondes ?`)) return;
         try {
           await api('/api/admin/clock', {
             method: 'POST',
-            body: JSON.stringify({ action: node.dataset.clock, minutes: Number(node.dataset.minutes) || undefined })
+            body: JSON.stringify({
+              action: node.dataset.clock,
+              minutes: Number(node.dataset.minutes) || undefined,
+              seconds: secondes
+            })
           });
         } catch (err) {
           toast(err.message, 'error');
@@ -1488,6 +1619,12 @@
 
   /* ----------------------------------------------------------------- boot */
 
+  // iOS n'autorise le son qu'après une interaction : on prépare le contexte audio
+  // au premier contact, pour que le décompte ne soit pas muet.
+  ['pointerdown', 'touchstart'].forEach((evt) =>
+    document.addEventListener(evt, () => audio(), { once: true, passive: true })
+  );
+
   el('sheetHandle').addEventListener('click', () => ui.sheet.classList.toggle('collapsed'));
 
   ['pointerdown', 'pointerup', 'touchstart', 'touchend'].forEach((evt) =>
@@ -1502,8 +1639,8 @@
 
   el('layersBtn').addEventListener('click', () => {
     const basemap = gameMap.toggleBasemap();
-    el('layersBtn').classList.toggle('active', basemap.name !== 'dark');
-    toast(basemap.name === 'streets' ? 'Plan détaillé — commerces visibles' : basemap.label);
+    el('layersBtn').classList.toggle('active', basemap.name !== 'streets');
+    toast(basemap.name === 'streets' ? 'Plan OpenStreetMap — commerces visibles' : basemap.label);
   });
 
   el('locateBtn').addEventListener('click', () => {
@@ -1520,6 +1657,10 @@
   });
 
   async function boot() {
+    if (!(await recoverSession())) {
+      location.replace('/');
+      return;
+    }
     config = await fetch('/api/config').then((r) => r.json());
     document.title = config.appName || 'Traque';
 
@@ -1533,7 +1674,7 @@
         render(true);
       }
     });
-    if (gameMap.basemap !== 'dark') el('layersBtn').classList.add('active');
+    if (gameMap.basemap !== 'streets') el('layersBtn').classList.add('active');
 
     if (localStorage.getItem('spymap.role') === 'player') startTracking();
 
