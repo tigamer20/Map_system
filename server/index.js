@@ -246,27 +246,18 @@ app.post('/api/admin/pause', auth, adminOnly, async (req, res) => {
       game.resumeGame();
       broadcast();
       for (const team of ['spy', 'spied']) {
-        // L'écran de pause qui disparaît suffit dans l'app ; la notification push
-        // sert aux téléphones rangés dans une poche.
         await notifyTeam(team, {
           title: 'Reprise de la partie',
           body: 'La pause est terminée, vous pouvez repartir.',
           kind: 'announce',
-          loud: true,
-          inApp: false
+          loud: true
         });
       }
     } else {
       const message = game.pauseGame(req.body.message);
       broadcast();
       for (const team of ['spy', 'spied']) {
-        await notifyTeam(team, {
-          title: 'Partie en pause',
-          body: message,
-          kind: 'announce',
-          loud: true,
-          inApp: false
-        });
+        await notifyTeam(team, { title: 'Partie en pause', body: message, kind: 'announce', loud: true });
       }
     }
     res.json({ ok: true });
