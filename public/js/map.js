@@ -2,65 +2,79 @@
 (function () {
   'use strict';
 
-  const CARTO = ['a', 'b', 'c', 'd'].map(
-    (s) => `https://${s}.basemaps.cartocdn.com/rastertiles/voyager/{z}/{x}/{y}{ratio}.png`
-  );
-  const ATTRIB_OSM = '&copy; OpenStreetMap contributors &copy; CARTO';
+  // Aucun de ces fonds ne demande de clé d'API.
+  const OSM = ['https://tile.openstreetmap.org/{z}/{x}/{y}.png'];
+  const ESRI_IMAGERY = [
+    'https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}'
+  ];
+  const ESRI_PLACES = [
+    'https://server.arcgisonline.com/ArcGIS/rest/services/Reference/World_Boundaries_and_Places/MapServer/tile/{z}/{y}/{x}'
+  ];
+  const ATTRIB_OSM = '&copy; OpenStreetMap contributors';
+  const ATTRIB_CARTO = '&copy; OpenStreetMap contributors &copy; CARTO';
   const ATTRIB_ESRI = 'Imagery &copy; Esri, Maxar, Earthstar Geographics';
 
-  function rasterStyle(tiles, attribution, extra) {
+  function rasterStyle(tiles, attribution, options) {
+    const opts = options || {};
     const style = {
       version: 8,
-      glyphs: 'https://fonts.openmaptiles.org/{fontstack}/{range}.pbf',
       sources: {
         base: { type: 'raster', tiles, tileSize: 256, attribution, maxzoom: 19 }
       },
       layers: [
         { id: 'bg', type: 'background', paint: { 'background-color': '#14171d' } },
-        { id: 'base', type: 'raster', source: 'base' }
+        { id: 'base', type: 'raster', source: 'base', paint: opts.paint || {} }
       ]
     };
-    if (extra) {
-      style.sources.labels = {
-        type: 'raster',
-        tiles: extra.tiles,
-        tileSize: 256,
-        maxzoom: 19
-      };
+    if (opts.labels) {
+      style.sources.labels = { type: 'raster', tiles: opts.labels, tileSize: 256, maxzoom: 19 };
       style.layers.push({ id: 'labels', type: 'raster', source: 'labels' });
     }
     return style;
   }
 
-  /** Plan détaillé (commerces visibles) — MapTiler si une clé est fournie. */
+  /** Tuiles CARTO : gratuites mais avec clé obligatoire depuis 2024. */
+  function cartoTiles(style, key) {
+    const ratio = window.devicePixelRatio > 1.4 ? '@2x' : '';
+    return ['a', 'b', 'c', 'd'].map(
+      (sub) => `https://${sub}.basemaps.cartocdn.com/rastertiles/${style}/{z}/{x}/{y}${ratio}.png?key=${key}`
+    );
+  }
+
+  /** Plan détaillé : CARTO Voyager si une clé existe, sinon OpenStreetMap. */
   function streetsStyle(config) {
     if (config.mapTilerKey) {
       return `https://api.maptiler.com/maps/streets-v2/style.json?key=${config.mapTilerKey}`;
     }
-    const ratio = window.devicePixelRatio > 1.4 ? '@2x' : '';
-    return rasterStyle(CARTO.map((t) => t.replace('{ratio}', ratio)), ATTRIB_OSM);
+    if (config.cartoKey) {
+      return rasterStyle(cartoTiles('voyager', config.cartoKey), ATTRIB_CARTO);
+    }
+    return rasterStyle(OSM, ATTRIB_OSM);
   }
 
-  /** Plan sombre, assorti à l'interface. */
+  /**
+   * Plan sombre : les mêmes tuiles OSM assombries par le moteur de rendu, ce qui
+   * évite de dépendre d'un fournisseur de tuiles sombres à clé.
+   */
   function darkStyle(config) {
     if (config.mapTilerKey) {
       return `https://api.maptiler.com/maps/streets-v2-dark/style.json?key=${config.mapTilerKey}`;
     }
-    const ratio = window.devicePixelRatio > 1.4 ? '@2x' : '';
-    return rasterStyle(
-      ['a', 'b', 'c', 'd'].map(
-        (sub) => `https://${sub}.basemaps.cartocdn.com/rastertiles/dark_matter/{z}/{x}/{y}${ratio}.png`
-      ),
-      ATTRIB_OSM
-    );
+    if (config.cartoKey) {
+      return rasterStyle(cartoTiles('dark_matter', config.cartoKey), ATTRIB_CARTO);
+    }
+    return rasterStyle(OSM, ATTRIB_OSM, {
+      paint: {
+        'raster-brightness-min': 0.02,
+        'raster-brightness-max': 0.52,
+        'raster-saturation': -0.2,
+        'raster-contrast': 0.2
+      }
+    });
   }
 
   function satelliteStyle() {
-    return rasterStyle(
-      ['https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}'],
-      ATTRIB_ESRI,
-      { tiles: ['https://basemaps.cartocdn.com/rastertiles/dark_only_labels/{z}/{x}/{y}.png'] }
-    );
+    return rasterStyle(ESRI_IMAGERY, ATTRIB_ESRI, { labels: ESRI_PLACES });
   }
 
   const BASEMAPS = [
@@ -97,6 +111,7 @@
     this.pinMarkers = new Map();
     this.follow = true;
     this.ready = false;
+    this.fellBack = false;
     this.onMarkerClick = opts.onMarkerClick || function () {};
 
     this.map = new maplibregl.Map({
@@ -115,6 +130,29 @@
     this.map.on('load', () => {
       this.ready = true;
       this._addHalo();
+    });
+
+    // Une carte vide n'explique rien : clé MapTiler refusée -> retour à OSM,
+    // fournisseur muet -> on le dit et on invite à changer de fond.
+    this.map.on('error', (event) => {
+      const err = (event && event.error) || {};
+      const url = err.url || '';
+      const badMapTiler = this.config.mapTilerKey && url.includes('api.maptiler.com');
+      const badCarto = this.config.cartoKey && url.includes('cartocdn.com');
+      if ((badMapTiler || badCarto) && !this.fellBack) {
+        this.fellBack = true;
+        this.config = Object.assign({}, this.config, { mapTilerKey: '', cartoKey: '' });
+        this.setBasemap(this.basemap);
+        if (opts.onBasemapFallback) opts.onBasemapFallback(badMapTiler ? 'MapTiler' : 'CARTO');
+        return;
+      }
+      if (!url || this.warnedAbout === this.basemap) return;
+      this.tileErrors = (this.tileErrors || 0) + 1;
+      if (this.tileErrors >= 4) {
+        this.warnedAbout = this.basemap;
+        this.tileErrors = 0;
+        if (opts.onBasemapError) opts.onBasemapError(basemapByName(this.basemap).label);
+      }
     });
     this.map.on('dragstart', () => {
       this.follow = false;
@@ -142,6 +180,7 @@
   GameMap.prototype.setBasemap = function (name) {
     const basemap = basemapByName(name);
     this.basemap = basemap.name;
+    this.tileErrors = 0;
     localStorage.setItem('spymap.basemap', basemap.name);
     this.map.setStyle(basemap.build(this.config));
     this.map.once('styledata', () => {

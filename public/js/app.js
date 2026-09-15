@@ -1091,6 +1091,8 @@
 
     gameMap = new GameMap('map', config, {
       onFollowChange: (follow) => el('locateBtn').classList.toggle('active', follow),
+      onBasemapFallback: (provider) => toast(`Clé ${provider} refusée — fond OpenStreetMap utilisé.`, 'error'),
+      onBasemapError: (label) => toast(`${label} ne répond pas — touchez le bouton calques pour changer de fond.`, 'error'),
       onMarkerClick: () => {
         activeTab = 'players';
         ui.sheet.classList.remove('collapsed');

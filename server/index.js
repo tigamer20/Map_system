@@ -71,9 +71,29 @@ function adminOnly(req, res, next) {
 
 /* -------------------------------------------------------------------- api */
 
+/**
+ * Une clé vide, laissée à un placeholder ou copiée depuis une doc donne un
+ * « API key required » et une carte muette : mieux vaut l'ignorer et retomber
+ * sur OpenStreetMap, qui ne demande aucune clé.
+ */
+function cleanKey(name) {
+  const key = (process.env[name] || '').trim();
+  const placeholder =
+    !key ||
+    key.length < 16 ||
+    /[<>\s]/.test(key) ||
+    /^(votre|your|my|ta|ma)[_-]?(cle|clef|key)/i.test(key) ||
+    /^(optionnel|optional|changeme|placeholder|xxx+)$/i.test(key);
+  if (placeholder && key) {
+    console.warn(`[carte] ${name} ignorée ("${key}") : fond OpenStreetMap utilisé.`);
+  }
+  return placeholder ? '' : key;
+}
+
 app.get('/api/config', (req, res) => {
   res.json({
-    mapTilerKey: process.env.MAPTILER_KEY || '',
+    mapTilerKey: cleanKey('MAPTILER_KEY'),
+    cartoKey: cleanKey('CARTO_KEY'),
     vapidPublicKey: push.publicKey(),
     appName: store.get().game.settings.appName
   });
