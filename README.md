@@ -261,12 +261,33 @@ des espionnés ne reçoit jamais les coordonnées des espions tant qu'aucun acc�
 ouvert. Elles ne vivent qu'en mémoire — un redémarrage vide la carte mais conserve les
 codes, les jokers et le chrono.
 
+## Le suivi s'arrête quand l'app est fermée
+
+**Une application web ne peut pas suivre une position en arrière-plan**, ni sur iPhone ni
+sur Android. Dès que le joueur verrouille son téléphone ou passe à une autre app, le
+navigateur gèle la page : plus aucune position n'est envoyée. Il n'existe aucun moyen de
+contourner cela depuis le web — seule une vraie application installée depuis l'App Store
+en serait capable.
+
+Concrètement, pendant une partie :
+
+- Le joueur doit **garder Traque ouverte, à l'écran**. L'app demande un verrou d'écran
+  (`Wake Lock`, supporté depuis iOS 16.4) pour que le téléphone ne s'éteigne pas tout seul.
+- S'il range son téléphone, son marqueur reste à sa dernière position connue, puis passe
+  en « signal perdu » au bout de 5 minutes, visible de tous.
+- Dès qu'il rouvre l'app, une position fraîche est demandée immédiatement et le marqueur
+  se replace en une seconde.
+- Si sa position n'a rien envoyé depuis 45 secondes, un avertissement s'affiche sur son
+  onglet Carte.
+
+Prévoyez des batteries externes : écran allumé et GPS en continu pendant 5 heures, c'est
+exigeant pour un téléphone.
+
 ## Bon à savoir
 
 - La précision GPS est celle que rapporte le téléphone ; chaque marqueur affiche son
   rayon ±, et un joueur silencieux depuis 5 minutes passe en « signal perdu ».
-- Gardez l'app au premier plan pendant la partie : les téléphones coupent le GPS des
-  onglets en arrière-plan. L'app demande un verrou d'écran quand le navigateur le permet.
+- Gardez l'app au premier plan pendant la partie (voir la section ci-dessus).
 - Il n'y a pas d'autre mot de passe que le code, et les positions ne sont pas chiffrées
   au repos. C'est un jeu entre amis, pas un outil de sécurité.
 - Le suivi des défis et du quota de photos n'est pas dans l'app : le maître du jeu les
