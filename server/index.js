@@ -588,7 +588,7 @@ server.listen(PORT, () => {
   );
   console.log(`\n  ${s.game.settings.appName} — http://localhost:${PORT}\n`);
   console.log(`  Traqueurs : ${game.teamName(s.game.settings.hunters)} · durée ${s.game.settings.durationMin} min\n`);
-  console.log('  Codes d\'accès :');
+  console.log(`  Codes d'accès (source : ${s.codesSource || 'tirage aléatoire'}) :`);
   console.log(rows.join('\n'));
   console.log('\n  Le GPS des téléphones exige du HTTPS : tunnel (cloudflared / ngrok) ou déploiement.\n');
 });

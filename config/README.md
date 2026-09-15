@@ -1,8 +1,12 @@
 # Personnalisation
 
-Déposez un fichier ici **avant le premier lancement** (ou supprimez `data/state.json`
-puis relancez) pour remplacer les valeurs par défaut. Copiez le `.example`
-correspondant et retirez le suffixe `.example`.
+Déposez un fichier ici pour remplacer les valeurs par défaut : copiez le `.example`
+correspondant et retirez le suffixe `.example`. **Un fichier modifié est relu à chaque
+redémarrage** — l'app compare son contenu à ce qu'elle avait enregistré et l'applique
+s'il a changé. Inutile de supprimer `data/state.json`.
+
+Ces fichiers doivent être **versionnés** (commités) pour arriver sur l'hébergeur :
+rien dans `config/` n'est ignoré par git.
 
 | Fichier | Rôle |
 |---|---|
@@ -14,9 +18,21 @@ correspondant et retirez le suffixe `.example`.
 Si un fichier est absent ou invalide, l'app reprend ses valeurs par défaut et
 l'explique dans les logs du serveur.
 
-> Sur un hébergeur dont le disque est effacé à chaque redémarrage (Render en plan
-> gratuit), passez plutôt par la variable d'environnement `ACCESS_CODES` : les codes
-> restent stables et ne sont pas publiés dans le dépôt.
+### Qui gagne, du fichier ou de la variable d'environnement ?
+
+1. `config/codes.json` s'il existe — c'est un choix explicite, il passe devant tout ;
+2. sinon la variable `ACCESS_CODES` ;
+3. sinon un tirage aléatoire, stable d'un redémarrage à l'autre.
+
+Le serveur annonce la source retenue au démarrage :
+
+```
+  Codes d'accès (source : config/codes.json) :
+  22316  player  spy    Raf
+```
+
+Si les deux sont présents, il le dit aussi. Gardez `ACCESS_CODES` uniquement si vous
+tenez à ce que vos codes ne soient pas lisibles dans un dépôt public.
 
 ## game.json
 
