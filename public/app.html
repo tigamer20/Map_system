@@ -5,11 +5,13 @@
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, maximum-scale=1, user-scalable=no" />
   <meta name="theme-color" content="#0f1116" />
   <meta name="apple-mobile-web-app-capable" content="yes" />
+  <meta name="apple-mobile-web-app-title" content="Traque" />
+  <meta name="mobile-web-app-capable" content="yes" />
   <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
   <title>Traque</title>
   <link rel="manifest" href="/manifest.webmanifest" />
   <link rel="icon" href="/icons/icon.svg" type="image/svg+xml" />
-  <link rel="apple-touch-icon" href="/icons/icon.svg" />
+  <link rel="apple-touch-icon" sizes="180x180" href="/icons/icon-180.png" />
   <link rel="stylesheet" href="/vendor/maplibre/maplibre-gl.css" />
   <link rel="stylesheet" href="/css/style.css" />
 </head>
@@ -47,6 +49,15 @@
   </div>
 
   <div class="toast-layer" id="toasts"></div>
+
+  <div class="alert-layer" id="pauseLayer" hidden>
+    <div class="alert-box">
+      <div class="icon">⏸️</div>
+      <h3>Partie en pause</h3>
+      <p id="pauseMessage"></p>
+      <div class="card-sub">Le maître du jeu relancera la partie. Le temps de pause vous est rendu.</div>
+    </div>
+  </div>
 
   <div class="alert-layer" id="alertLayer" hidden>
     <div class="alert-box">

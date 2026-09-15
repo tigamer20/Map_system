@@ -79,7 +79,8 @@ function defaultJokers() {
         icon: '🔄',
         description: 'Un défi des espionnés est réinitialisé et repasse en « non fait ».',
         unlockRequirement: 'Réaliser vous-même le défi que vous voulez réinitialiser.',
-        prompt: 'Quel défi est réinitialisé ?',
+        prompt: null,
+        picksChallenge: true,
         effect: 'notify',
         durationSec: 0,
         requiresUnlock: true,
@@ -118,6 +119,42 @@ function defaultJokers() {
       }
     ]
   };
+}
+
+/**
+ * Défis : par défaut ceux de l'équipe espionnée. Remplaçables par config/defis.json.
+ * `photo: true` oblige le joueur à envoyer une photo pour valider.
+ */
+function defaultChallenges() {
+  const custom = readConfig('defis.json');
+  const list = Array.isArray(custom) ? custom : null;
+  const source = list || [
+    { title: 'Photo devant une fontaine', photo: true },
+    { title: 'Boire quelque chose dans un bar ou un café', photo: true },
+    { title: 'Prendre un transport en commun sur au moins 3 arrêts', photo: true },
+    { title: 'Trouver une plaque de rue qui porte un prénom', photo: true },
+    { title: 'Monter au point le plus haut accessible du quartier', photo: true },
+    { title: 'Acheter quelque chose à moins de 2 €', photo: true },
+    { title: 'Faire un high-five à un inconnu', photo: false },
+    { title: 'Chanter 30 secondes dans un lieu public', photo: false }
+  ];
+  return source.map((c, index) =>
+    Object.assign(
+      {
+        id: `defi_${index + 1}`,
+        team: 'spied',
+        title: `Défi ${index + 1}`,
+        description: '',
+        photo: false,
+        done: false,
+        doneAt: null,
+        doneBy: null,
+        photoFile: null
+      },
+      c,
+      { id: c.id || `defi_${index + 1}`, done: false, doneAt: null, doneBy: null, photoFile: null }
+    )
+  );
 }
 
 /** Round settings: who hunts whom, how long the round lasts, what it is called. */
@@ -232,7 +269,10 @@ function defaultState() {
       pins: [],
       // Timed constraints shown to a team: [{id, team, label, until}]
       effects: [],
-      jokers: defaultJokers()
+      jokers: defaultJokers(),
+      challenges: defaultChallenges(),
+      pausedAt: null,
+      pauseMessage: null
     },
     requests: [],
     events: [],
@@ -248,6 +288,9 @@ function ensureShape(state) {
   merged.game.blocks = Object.assign({}, base.game.blocks, (state.game || {}).blocks || {});
   merged.game.jokers = (state.game || {}).jokers || base.game.jokers;
   merged.game.settings = Object.assign({}, base.game.settings, (state.game || {}).settings || {});
+  merged.game.challenges = (state.game || {}).challenges || base.game.challenges;
+  merged.game.pausedAt = (state.game || {}).pausedAt || null;
+  merged.game.pauseMessage = (state.game || {}).pauseMessage || null;
   merged.game.endsAt = (state.game || {}).endsAt || base.game.endsAt;
   merged.game.pins = (state.game || {}).pins || [];
   merged.game.effects = (state.game || {}).effects || [];
@@ -313,4 +356,15 @@ function resetGame() {
   return s;
 }
 
-module.exports = { get, load, save, resetGame, defaultState, defaultJokers, randomCode, TEAMS, DATA_DIR };
+module.exports = {
+  get,
+  load,
+  save,
+  resetGame,
+  defaultState,
+  defaultJokers,
+  defaultChallenges,
+  randomCode,
+  TEAMS,
+  DATA_DIR
+};

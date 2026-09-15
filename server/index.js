@@ -6,15 +6,19 @@ const crypto = require('crypto');
 const express = require('express');
 const { WebSocketServer } = require('ws');
 
+const fs = require('fs');
+
 const store = require('./store');
 const game = require('./game');
 const push = require('./push');
 
 const PORT = process.env.PORT || 3000;
 const PUBLIC_DIR = path.join(__dirname, '..', 'public');
+const UPLOAD_DIR = path.join(store.DATA_DIR, 'uploads');
 
 store.load();
 push.init();
+fs.mkdirSync(UPLOAD_DIR, { recursive: true });
 
 const app = express();
 app.set('trust proxy', true);
@@ -166,9 +170,102 @@ app.post('/api/request', auth, async (req, res) => {
 app.post('/api/joker/play', auth, async (req, res) => {
   try {
     if (req.session.role !== 'player') throw new Error('Réservé aux joueurs.');
-    const notify = game.playJoker(req.session.team, req.body.jokerId, { detail: req.body.detail });
+    const notify = game.playJoker(req.session.team, req.body.jokerId, {
+      detail: req.body.detail,
+      challengeId: req.body.challengeId
+    });
     broadcast();
     for (const n of notify) await notifyTeam(n.team, n);
+    res.json({ ok: true });
+  } catch (err) {
+    res.status(400).json({ error: err.message });
+  }
+});
+
+/** Les photos de défi transitent en base64 : ce corps-là a droit à plus de place. */
+app.post('/api/challenge/complete', auth, express.json({ limit: '8mb' }), (req, res) => {
+  try {
+    if (req.session.role !== 'player') throw new Error('Réservé aux joueurs.');
+    const challenge = game.findChallenge(req.body.id);
+    if (!challenge) throw new Error('Défi inconnu.');
+
+    let file = null;
+    if (challenge.photo) {
+      const match = /^data:image\/(jpeg|png|webp);base64,([A-Za-z0-9+/=]+)$/.exec(req.body.photo || '');
+      if (!match) throw new Error('Envoyez une photo (JPEG ou PNG).');
+      const buffer = Buffer.from(match[2], 'base64');
+      if (buffer.length > 6 * 1024 * 1024) throw new Error('Photo trop lourde.');
+      file = `${challenge.id}-${Date.now()}.${match[1] === 'jpeg' ? 'jpg' : match[1]}`;
+      fs.writeFileSync(path.join(UPLOAD_DIR, file), buffer);
+    }
+
+    game.completeChallenge(req.session, challenge.id, file);
+    broadcast();
+    notifyRoles(['admin'], {
+      title: 'Défi validé',
+      body: `${game.teamName(challenge.team)} : ${challenge.title}`,
+      kind: 'request'
+    });
+    res.json({ ok: true });
+  } catch (err) {
+    res.status(400).json({ error: err.message });
+  }
+});
+
+/** La photo n'est visible que par l'équipe concernée et le maître du jeu. */
+app.get('/api/challenge/photo/:id', auth, (req, res) => {
+  const challenge = game.findChallenge(req.params.id);
+  if (!challenge || !challenge.photoFile) return res.status(404).json({ error: 'Pas de photo.' });
+  const allowed =
+    req.session.role === 'admin' || req.session.role === 'viewer' || req.session.team === challenge.team;
+  if (!allowed) return res.status(403).json({ error: 'Photo réservée à son équipe.' });
+
+  const file = path.join(UPLOAD_DIR, path.basename(challenge.photoFile));
+  if (!fs.existsSync(file)) return res.status(404).json({ error: 'Photo introuvable.' });
+  res.sendFile(file);
+});
+
+app.post('/api/admin/challenge/reset', auth, adminOnly, (req, res) => {
+  try {
+    game.resetChallenge(req.body.id, 'maître du jeu');
+    broadcast();
+    res.json({ ok: true });
+  } catch (err) {
+    res.status(400).json({ error: err.message });
+  }
+});
+
+/* ------------------------------------------------------------------ pause */
+
+app.post('/api/admin/pause', auth, adminOnly, async (req, res) => {
+  try {
+    if (req.body.action === 'resume') {
+      game.resumeGame();
+      broadcast();
+      for (const team of ['spy', 'spied']) {
+        // L'écran de pause qui disparaît suffit dans l'app ; la notification push
+        // sert aux téléphones rangés dans une poche.
+        await notifyTeam(team, {
+          title: 'Reprise de la partie',
+          body: 'La pause est terminée, vous pouvez repartir.',
+          kind: 'announce',
+          loud: true,
+          inApp: false
+        });
+      }
+    } else {
+      const message = game.pauseGame(req.body.message);
+      broadcast();
+      for (const team of ['spy', 'spied']) {
+        await notifyTeam(team, {
+          title: 'Partie en pause',
+          body: message,
+          kind: 'announce',
+          loud: true,
+          inApp: false
+        });
+      }
+    }
     res.json({ ok: true });
   } catch (err) {
     res.status(400).json({ error: err.message });

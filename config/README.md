@@ -9,6 +9,7 @@ correspondant et retirez le suffixe `.example`.
 | `codes.json` | Choisir vos propres codes à 5 chiffres au lieu des codes aléatoires |
 | `jokers.json` | Réécrire les 2 jokers de chaque équipe |
 | `game.json` | Qui traque qui, durée de la partie, nom affiché |
+| `defis.json` | La liste des défis et lesquels demandent une photo |
 
 Si un fichier est absent ou invalide, l'app reprend ses valeurs par défaut et
 l'explique dans les logs du serveur.
@@ -26,6 +27,28 @@ l'explique dans les logs du serveur.
   Mettez `"none"` pour que les deux équipes doivent tout demander.
 - `durationMin` : durée de la partie en minutes (300 = 5 h).
 - `appName` : nom affiché sur l'écran de connexion.
+
+## defis.json
+
+Un tableau d'objets, dans l'ordre d'affichage :
+
+```json
+[
+  { "title": "Photo devant une fontaine", "photo": true },
+  { "title": "Faire un high-five à un inconnu", "photo": false }
+]
+```
+
+- `title` : le texte affiché au joueur (obligatoire).
+- `description` : précision facultative, en plus petit sous le titre.
+- `photo` : `true` oblige à envoyer une photo pour valider le défi. La photo est
+  redimensionnée par le téléphone puis stockée dans `data/uploads/`, visible par
+  l'équipe concernée et le maître du jeu seulement.
+- `team` : `"spied"` par défaut. Mettez `"spy"` pour donner la liste aux espions.
+- `id` : facultatif, calculé sinon (`defi_1`, `defi_2`…).
+
+Le joker « Défi annulé » des espions pioche dans les défis **validés** de l'autre
+équipe : celui qui est choisi repasse en non fait et sa photo est effacée.
 
 ## Effets de joker
 
