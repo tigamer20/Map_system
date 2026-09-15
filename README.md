@@ -312,6 +312,9 @@ exigeant pour un téléphone.
 
 - La précision GPS est celle que rapporte le téléphone ; chaque marqueur affiche son
   rayon ±, et un joueur silencieux depuis 5 minutes passe en « signal perdu ».
+- **Se déconnecter retire aussitôt le marqueur de la carte.** Fermer l'app sans se
+  déconnecter, en revanche, le laisse à sa dernière position connue : c'est voulu, sinon
+  un téléphone mis en poche trente secondes ferait clignoter le joueur sur la carte.
 - Gardez l'app au premier plan pendant la partie (voir la section ci-dessus).
 - Il n'y a pas d'autre mot de passe que le code, et les positions ne sont pas chiffrées
   au repos. C'est un jeu entre amis, pas un outil de sécurité.

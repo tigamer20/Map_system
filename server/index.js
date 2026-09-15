@@ -156,8 +156,17 @@ app.post('/api/login', (req, res) => {
 app.post('/api/logout', auth, (req, res) => {
   const s = store.get();
   delete s.devices[req.session.token];
+
+  // Un joueur qui se déconnecte quitte la carte tout de suite : sans cela son
+  // marqueur restait figé sur sa dernière position pendant cinq minutes.
+  if (req.session.role === 'player') {
+    game.positions.delete(req.session.code);
+    game.addEvent('join', `${req.session.label} a quitté la partie`, { scope: 'all' });
+  }
+
   store.save();
   res.clearCookie('traque_token', { path: '/' });
+  broadcast();
   res.json({ ok: true });
 });
 
