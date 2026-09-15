@@ -145,17 +145,34 @@ function defaultChallenges() {
         team: 'spied',
         title: `Défi ${index + 1}`,
         description: '',
+        // false = aucune photo, true = obligatoire, 'optional' = acceptée sans l'être.
         photo: false,
+        photoLabel: null,
+        // true = le maître du jeu doit valider avant que le défi compte.
+        approval: false,
         // 'ranking' = classement des joueurs de l'équipe, 'text' = réponse libre.
         answer: null,
         answerValue: null,
+        pending: false,
+        submittedAt: null,
+        submittedBy: null,
         done: false,
         doneAt: null,
         doneBy: null,
         photoFile: null
       },
       c,
-      { id: c.id || `defi_${index + 1}`, done: false, doneAt: null, doneBy: null, photoFile: null, answerValue: null }
+      {
+        id: c.id || `defi_${index + 1}`,
+        done: false,
+        doneAt: null,
+        doneBy: null,
+        photoFile: null,
+        answerValue: null,
+        pending: false,
+        submittedAt: null,
+        submittedBy: null
+      }
     )
   );
 }

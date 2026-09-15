@@ -151,10 +151,20 @@ pour la liste des effets disponibles.
 
 ## Les défis
 
-Les espionnés ont un onglet **Défis** listant ce qu'ils doivent accomplir. Un défi se
-valide d'un bouton ; ceux marqués « photo obligatoire » exigent une photo, prise depuis
-le téléphone, redimensionnée par le navigateur avant l'envoi. Elle n'est visible que par
-l'équipe concernée et le maître du jeu.
+Les espionnés ont un onglet **Défis** listant ce qu'ils doivent accomplir. Chaque défi
+dit ce qu'il attend comme preuve :
+
+- **rien** — un bouton suffit ;
+- **une photo obligatoire**, ou **facultative** si on veut juste laisser une trace ;
+- **la validation du maître du jeu**, quand la preuve ne tient pas dans une image.
+
+Pour une photo, le joueur choisit sa source : *Prendre une photo*, *Galerie* ou
+*Fichiers* (pratique pour une capture d'écran). Le navigateur la redimensionne avant
+l'envoi, et elle n'est visible que par l'équipe concernée et le maître du jeu.
+
+Un défi soumis à validation part dans l'onglet **Validations** du maître du jeu, avec sa
+photo s'il y en a une. Tant qu'il n'a pas tranché, le défi reste « en attente » et ne
+compte pas ; un refus le remet à faire.
 
 Le maître du jeu voit l'avancement et les photos dans son onglet **Contrôle**, et peut
 annuler un défi mal validé. Le joker « Défi annulé » des espions, lui, propose la liste

@@ -248,11 +248,14 @@ button { cursor: pointer; border: none; background: none; }
 .pill.used { background: var(--surface-2); color: var(--muted); }
 
 .joker.used { opacity: 0.55; }
-.joker .req {
+/* Encadré d'explication, utilisé par les jokers, les défis et les validations. */
+.req {
   margin-top: 10px; padding: 10px 12px; border-radius: 12px;
   background: var(--surface-2); font-size: 12.5px; line-height: 1.5;
 }
-.joker .req b { display: block; font-size: 10.5px; text-transform: uppercase; letter-spacing: 0.07em; color: var(--muted); margin-bottom: 4px; }
+.req b { display: block; font-size: 10.5px; text-transform: uppercase; letter-spacing: 0.07em; color: var(--muted); margin-bottom: 4px; }
+.req img { width: 100%; border-radius: 10px; margin-top: 8px; }
+.req .card-actions { margin-top: 10px; }
 
 .event { display: flex; gap: 10px; padding: 10px 0; border-bottom: 1px solid var(--line); font-size: 13px; }
 .event:last-child { border-bottom: none; }

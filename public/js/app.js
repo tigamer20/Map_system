@@ -611,18 +611,63 @@
     return values;
   }
 
+  /**
+   * Trois sources : appareil photo, galerie, fichiers. iOS regroupe galerie et
+   * fichiers dans une même feuille système ; Android ouvre bien deux sélecteurs.
+   */
+  function photoPicker(challenge, photo) {
+    const required = challenge.photo === true;
+    const title = challenge.photoLabel || (required ? 'Photo obligatoire' : 'Photo facultative');
+    return `<div class="req"><b>${escapeHtml(title)}</b>
+      ${
+        photo
+          ? `<img src="${photo}" alt="Aperçu" style="width:100%;border-radius:10px;margin-top:8px" />`
+          : required
+          ? 'Elle part avec la validation.'
+          : 'Ajoutez-la si vous voulez, elle n’est pas obligatoire.'
+      }
+      <div class="card-actions">
+        <label class="btn ghost small" for="cam_${challenge.id}">${photo ? 'Reprendre' : 'Prendre une photo'}</label>
+        <label class="btn ghost small" for="gal_${challenge.id}">Galerie</label>
+        <label class="btn ghost small" for="fil_${challenge.id}">Fichiers</label>
+      </div>
+      <input id="cam_${challenge.id}" type="file" accept="image/*" capture="environment" data-photo="${challenge.id}" hidden />
+      <input id="gal_${challenge.id}" type="file" accept="image/*" data-photo="${challenge.id}" hidden />
+      <input id="fil_${challenge.id}" type="file" data-photo="${challenge.id}" hidden />
+    </div>`;
+  }
+
   function renderChallengesPanel() {
     const me = snapshot.me;
     const mine = (snapshot.challenges || []).filter((c) => c.team === me.team);
     const done = mine.filter((c) => c.done).length;
+    const waiting = mine.filter((c) => c.pending).length;
 
     let html = `<div class="card accent">
-      <div class="card-title">${done} / ${mine.length} défis validés</div>
+      <div class="card-title">${done} / ${mine.length} défis validés${
+        waiting ? ` · ${waiting} en attente` : ''
+      }</div>
       <div class="card-sub">Un défi annulé par l'équipe adverse repasse en non fait : il faudra le refaire.</div>
     </div>`;
 
+    const pending = mine.filter((c) => c.pending);
+    if (pending.length) {
+      html += '<div class="section-label">En attente du maître du jeu</div>';
+      html += pending
+        .map(
+          (challenge) => `<div class="card ${challenge.team}">
+            <div class="card-head">
+              <div style="flex:1;min-width:0"><div class="card-title">${escapeHtml(challenge.title)}</div>
+              <div class="card-sub">Envoyé à ${fmtTime(challenge.submittedAt)} par ${escapeHtml(challenge.submittedBy || '—')}</div></div>
+              <span class="pill locked">En attente</span>
+            </div>
+          </div>`
+        )
+        .join('');
+    }
+
     html += '<div class="section-label">À faire</div>';
-    const todo = mine.filter((c) => !c.done);
+    const todo = mine.filter((c) => !c.done && !c.pending);
     html += todo.length
       ? todo
           .map((challenge) => {
@@ -631,22 +676,12 @@
               <div class="card-title">${escapeHtml(challenge.title)}</div>
               ${challenge.description ? `<div class="card-sub">${escapeHtml(challenge.description)}</div>` : ''}
               ${challenge.answer === 'ranking' ? rankingFields(challenge) : ''}
-              ${
-                challenge.photo
-                  ? `<div class="req"><b>Photo obligatoire</b>
-                      ${
-                        photo
-                          ? `<img src="${photo}" alt="Aperçu" style="width:100%;border-radius:10px;margin-top:8px" />`
-                          : 'Prenez la photo, elle part avec la validation.'
-                      }
-                     </div>
-                     <div class="card-actions">
-                       <label class="btn ghost small" for="photo_${challenge.id}">${photo ? 'Changer la photo' : 'Prendre la photo'}</label>
-                       <input id="photo_${challenge.id}" type="file" accept="image/*" capture="environment" data-photo="${challenge.id}" hidden />
-                       <button class="btn small" data-complete="${challenge.id}"${photo ? '' : ' disabled'}>Valider le défi</button>
-                     </div>`
-                  : `<div class="card-actions"><button class="btn small" data-complete="${challenge.id}">Valider le défi</button></div>`
-              }
+              ${challenge.photo ? photoPicker(challenge, photo) : ''}
+              <div class="card-actions">
+                <button class="btn small" data-complete="${challenge.id}"${
+                  challenge.photo === true && !photo ? ' disabled' : ''
+                }>${challenge.approval ? 'Envoyer au maître du jeu' : 'Valider le défi'}</button>
+              </div>
             </div>`;
           })
           .join('')
@@ -741,21 +776,43 @@
           .map((r) => {
             const joker =
               r.type === 'unlock' ? (snapshot.jokers[r.team] || []).find((j) => j.id === r.payload.jokerId) : null;
-            return `<div class="card ${r.team}">
-              <div class="card-title">${TEAM[r.team]} · ${joker ? escapeHtml(joker.name) : 'Localisation'}</div>
-              <div class="card-sub">Demandé par ${escapeHtml(r.from)} à ${fmtTime(r.createdAt)}</div>
-              ${
-                joker
-                  ? `<div class="req"><b>Défi à vérifier</b>${escapeHtml(joker.unlockRequirement || '—')}</div>`
-                  : `<div class="req"><b>Mode demandé</b>${r.payload.mode === 'snapshot' ? 'Envoi ponctuel (point figé)' : 'Suivi en direct'}</div>`
-              }
-              <div class="card-actions">
+            const challenge =
+              r.type === 'challenge'
+                ? (snapshot.challenges || []).find((c) => c.id === r.payload.challengeId)
+                : null;
+            const titre = challenge ? challenge.title : joker ? joker.name : 'Localisation';
+
+            let corps = '';
+            if (challenge) {
+              corps = `${challenge.description ? `<div class="req"><b>Le défi</b>${escapeHtml(challenge.description)}</div>` : ''}
+                ${answerLine(challenge)}
                 ${
-                  joker
-                    ? `<button class="btn small" data-decide="${r.id}" data-approve="1">Valider le défi</button>`
-                    : `<button class="btn small" data-decide="${r.id}" data-approve="1" data-mode="${r.payload.mode || 'live'}" data-minutes="3">Accorder 3 min</button>
-                       <button class="btn ghost small" data-decide="${r.id}" data-approve="1" data-mode="${r.payload.mode || 'live'}" data-minutes="10">10 min</button>`
-                }
+                  challenge.photoFile
+                    ? `<img src="/api/challenge/photo/${challenge.id}?token=${encodeURIComponent(token)}" alt="Photo envoyée" style="width:100%;border-radius:10px;margin-top:10px" />`
+                    : '<div class="req">Aucune photo : validez sur ce que vous avez vu.</div>'
+                }`;
+            } else if (joker) {
+              corps = `<div class="req"><b>Défi à vérifier</b>${escapeHtml(joker.unlockRequirement || '—')}</div>`;
+            } else {
+              corps = `<div class="req"><b>Mode demandé</b>${r.payload.mode === 'snapshot' ? 'Envoi ponctuel (point figé)' : 'Suivi en direct'}</div>`;
+            }
+
+            let boutons = '';
+            if (challenge) {
+              boutons = `<button class="btn small" data-decide="${r.id}" data-approve="1">Accepter le défi</button>`;
+            } else if (joker) {
+              boutons = `<button class="btn small" data-decide="${r.id}" data-approve="1">Valider le défi</button>`;
+            } else {
+              boutons = `<button class="btn small" data-decide="${r.id}" data-approve="1" data-mode="${r.payload.mode || 'live'}" data-minutes="3">Accorder 3 min</button>
+                <button class="btn ghost small" data-decide="${r.id}" data-approve="1" data-mode="${r.payload.mode || 'live'}" data-minutes="10">10 min</button>`;
+            }
+
+            return `<div class="card ${r.team}">
+              <div class="card-title">${TEAM[r.team]} · ${escapeHtml(titre)}</div>
+              <div class="card-sub">Envoyé par ${escapeHtml(r.from)} à ${fmtTime(r.createdAt)}</div>
+              ${corps}
+              <div class="card-actions">
+                ${boutons}
                 <button class="btn danger small" data-decide="${r.id}" data-approve="0">Refuser</button>
               </div>
             </div>`;
@@ -770,7 +827,7 @@
           .map(
             (r) => `<div class="event"><time>${fmtTime(r.decidedAt || r.createdAt)}</time>
               <span class="kind ${r.status === 'denied' ? 'denied' : 'request'}"></span>
-              <span>${TEAM[r.team]} · ${r.type === 'unlock' ? 'joker' : 'localisation'} · <b>${label[r.status] || r.status}</b></span></div>`
+              <span>${TEAM[r.team]} · ${{ unlock: 'joker', challenge: 'défi', location: 'localisation' }[r.type] || r.type} · <b>${label[r.status] || r.status}</b></span></div>`
           )
           .join('')
       : '<div class="empty">Aucune décision pour le moment.</div>';
@@ -889,12 +946,18 @@
                   <div class="card-sub">${
                     challenge.done
                       ? `Validé à ${fmtTime(challenge.doneAt)} par ${escapeHtml(challenge.doneBy || '—')}`
-                      : challenge.photo
+                      : challenge.pending
+                      ? `Envoyé à ${fmtTime(challenge.submittedAt)} — à traiter dans Validations`
+                      : challenge.photo === true
                       ? 'À faire · photo obligatoire'
+                      : challenge.approval
+                      ? 'À faire · votre validation requise'
                       : 'À faire'
                   }</div>
                 </div>
-                <span class="pill ${challenge.done ? 'ok' : 'used'}">${challenge.done ? 'Fait' : 'À faire'}</span>
+                <span class="pill ${challenge.done ? 'ok' : challenge.pending ? 'locked' : 'used'}">${
+                  challenge.done ? 'Fait' : challenge.pending ? 'En attente' : 'À faire'
+                }</span>
               </div>
               ${answerLine(challenge)}
               ${
@@ -903,8 +966,10 @@
                   : ''
               }
               ${
-                challenge.done
-                  ? `<div class="card-actions"><button class="btn danger small" data-reset-challenge="${challenge.id}">Annuler ce défi</button></div>`
+                challenge.done || challenge.pending
+                  ? `<div class="card-actions"><button class="btn danger small" data-reset-challenge="${challenge.id}">${
+                      challenge.pending ? 'Remettre à faire' : 'Annuler ce défi'
+                    }</button></div>`
                   : ''
               }
             </div>`
@@ -1055,7 +1120,8 @@
     const scroll = ui.sheetBody.scrollTop;
     const focusId = document.activeElement ? document.activeElement.id : null;
     const values = {};
-    ui.sheetBody.querySelectorAll('input[id], select[id], textarea[id]').forEach((node) => {
+    // Un input[type=file] refuse qu'on lui réassigne sa valeur : on l'exclut.
+    ui.sheetBody.querySelectorAll('input[id]:not([type="file"]), select[id], textarea[id]').forEach((node) => {
       values[node.id] = node.value;
     });
 
@@ -1169,10 +1235,11 @@
         if (!file) return;
         try {
           pendingPhotos[node.dataset.photo] = await compressImage(file);
-          render(true);
         } catch (err) {
-          toast('Photo illisible, réessayez.', 'error');
+          toast("Ce fichier n'est pas une image lisible.", 'error');
+          return;
         }
+        render(true);
       })
     );
 
