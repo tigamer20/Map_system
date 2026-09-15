@@ -41,9 +41,16 @@ Un tableau d'objets, dans l'ordre d'affichage :
 
 - `title` : le texte affiché au joueur (obligatoire).
 - `description` : précision facultative, en plus petit sous le titre.
-- `photo` : `true` oblige à envoyer une photo pour valider le défi. La photo est
-  redimensionnée par le téléphone puis stockée dans `data/uploads/`, visible par
-  l'équipe concernée et le maître du jeu seulement.
+- `photo` : `true` oblige à envoyer une photo, `"optional"` l'accepte sans l'exiger,
+  `false` n'en demande aucune. La photo est redimensionnée par le téléphone puis stockée
+  dans `data/uploads/`, visible par l'équipe concernée et le maître du jeu seulement.
+  Le joueur choisit sa source : appareil photo, galerie ou fichiers.
+- `photoLabel` : remplace le titre de l'encadré (« Capture d'écran du chrono » plutôt
+  que « Photo obligatoire »).
+- `approval` : `true` envoie le défi au maître du jeu au lieu de le valider tout de
+  suite. Il apparaît dans son onglet Validations avec la photo s'il y en a une ; tant
+  qu'il n'a pas tranché, le défi reste « en attente » et ne compte pas. Un refus le
+  remet à faire.
 - `team` : `"spied"` par défaut. Mettez `"spy"` pour donner la liste aux espions.
 - `id` : facultatif, calculé sinon (`defi_1`, `defi_2`…).
 - `answer` : réponse à fournir en plus, pour valider le défi.

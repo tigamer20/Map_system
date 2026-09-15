@@ -7,17 +7,19 @@
   {
     "title": "Marcher toute la passerelle de la chute",
     "description": "Une personne de l'équipe doit la faire sur une seule jambe.",
-    "photo": true
+    "photo": false,
+    "approval": true
   },
   {
     "title": "Trouver un inconnu qui mesure 6 pieds 2 ou plus",
     "description": "",
-    "photo": true
+    "photo": "optional"
   },
   {
     "title": "Monter tous les étages du parking Wellington sud en moins d'une minute",
     "description": "Du sous-sol jusqu'au toit, sans les escaliers ni l'ascenseur. Au moins 2 joueurs doivent le faire.",
-    "photo": true
+    "photo": true,
+    "photoLabel": "Capture d'écran du chrono"
   },
   {
     "title": "Demander à un inconnu de vous classer du plus cave au plus intelligent",

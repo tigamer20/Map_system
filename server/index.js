@@ -192,7 +192,8 @@ app.post('/api/challenge/complete', auth, express.json({ limit: '8mb' }), (req, 
     if (!challenge) throw new Error('Défi inconnu.');
 
     let file = null;
-    if (challenge.photo) {
+    const photoSent = typeof req.body.photo === 'string' && req.body.photo.length > 0;
+    if (challenge.photo === true || (challenge.photo === 'optional' && photoSent)) {
       const match = /^data:image\/(jpeg|png|webp);base64,([A-Za-z0-9+/=]+)$/.exec(req.body.photo || '');
       if (!match) throw new Error('Envoyez une photo (JPEG ou PNG).');
       const buffer = Buffer.from(match[2], 'base64');
@@ -201,10 +202,10 @@ app.post('/api/challenge/complete', auth, express.json({ limit: '8mb' }), (req, 
       fs.writeFileSync(path.join(UPLOAD_DIR, file), buffer);
     }
 
-    game.completeChallenge(req.session, challenge.id, file, req.body.answer);
+    const result = game.completeChallenge(req.session, challenge.id, file, req.body.answer);
     broadcast();
     notifyRoles(['admin'], {
-      title: 'Défi validé',
+      title: result.pending ? 'Défi à valider' : 'Défi validé',
       body: `${game.teamName(challenge.team)} : ${challenge.title}`,
       kind: 'request'
     });

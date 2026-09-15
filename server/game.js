@@ -195,6 +195,16 @@ function decideRequest(requestId, approve, options = {}) {
   const notify = [];
 
   if (!approve) {
+    if (request.type === 'challenge') {
+      const challenge = findChallenge(request.payload.challengeId);
+      if (challenge) {
+        challenge.pending = false;
+        challenge.photoFile = null;
+        challenge.answerValue = null;
+        challenge.submittedAt = null;
+        challenge.submittedBy = null;
+      }
+    }
     addEvent('denied', `Demande des ${teamName(request.team).toLowerCase()} refusée`, {
       team: request.team,
       scope: 'team'
@@ -232,6 +242,23 @@ function decideRequest(requestId, approve, options = {}) {
           : `Suivi en direct pendant ${minutes} minutes.`,
       kind: 'granted'
     });
+  }
+
+  if (request.type === 'challenge') {
+    const challenge = findChallenge(request.payload.challengeId);
+    if (challenge) {
+      challenge.pending = false;
+      challenge.done = true;
+      challenge.doneAt = now();
+      challenge.doneBy = challenge.submittedBy;
+      addEvent('challenge', `« ${challenge.title} » validé par le maître du jeu`, { scope: 'all' });
+      notify.push({
+        team: challenge.team,
+        title: 'Défi validé',
+        body: `« ${challenge.title} » est accepté.`,
+        kind: 'granted'
+      });
+    }
   }
 
   if (request.type === 'unlock') {
@@ -469,22 +496,56 @@ function checkAnswer(challenge, answer) {
   return text;
 }
 
-function completeChallenge(session, id, photoFile, answer) {
+function completeChallenge(session, challengeId, photoFile, answer) {
   assertRunning();
-  const challenge = findChallenge(id);
+  const challenge = findChallenge(challengeId);
   if (!challenge) throw new Error('Défi inconnu.');
   if (session.role !== 'player' || session.team !== challenge.team) {
     throw new Error("Ce défi n'est pas le vôtre.");
   }
   if (challenge.done) throw new Error('Ce défi est déjà validé.');
-  if (challenge.photo && !photoFile) throw new Error('Ce défi demande une photo.');
+  if (challenge.pending) throw new Error('Ce défi attend déjà la validation du maître du jeu.');
+  if (challenge.photo === true && !photoFile) throw new Error('Ce défi demande une photo.');
+
+  // Tout ce qui peut échouer se fait AVANT de toucher au défi : sinon une erreur
+  // le laisse à moitié soumis, sans demande à valider.
   const answerValue = checkAnswer(challenge, answer);
+  const request = challenge.approval
+    ? {
+        id: id(),
+        type: 'challenge',
+        team: challenge.team,
+        code: session.code,
+        from: session.label,
+        payload: { challengeId: challenge.id },
+        status: 'pending',
+        createdAt: now(),
+        decidedAt: null,
+        decidedBy: null,
+        note: null
+      }
+    : null;
+
+  challenge.photoFile = photoFile || null;
+  challenge.answerValue = answerValue;
+
+  if (request) {
+    // Défi soumis à validation : il n'est pas encore acquis, le maître du jeu tranche.
+    challenge.pending = true;
+    challenge.submittedAt = now();
+    challenge.submittedBy = session.label;
+    store.get().requests.unshift(request);
+    addEvent('challenge', `${teamName(challenge.team)} soumettent « ${challenge.title} »`, {
+      team: challenge.team,
+      scope: 'team'
+    });
+    store.save();
+    return challenge;
+  }
 
   challenge.done = true;
   challenge.doneAt = now();
   challenge.doneBy = session.label;
-  challenge.photoFile = photoFile || null;
-  challenge.answerValue = answerValue;
   addEvent('challenge', `${teamName(challenge.team)} valident « ${challenge.title} »`, { scope: 'all' });
   store.save();
   return challenge;
@@ -494,12 +555,15 @@ function completeChallenge(session, id, photoFile, answer) {
 function resetChallenge(id, by) {
   const challenge = findChallenge(id);
   if (!challenge) throw new Error('Défi inconnu.');
-  if (!challenge.done) throw new Error("Ce défi n'est pas encore validé.");
+  if (!challenge.done && !challenge.pending) throw new Error("Ce défi n'est ni validé ni en attente.");
   challenge.done = false;
   challenge.doneAt = null;
   challenge.doneBy = null;
   challenge.photoFile = null;
   challenge.answerValue = null;
+  challenge.pending = false;
+  challenge.submittedAt = null;
+  challenge.submittedBy = null;
   addEvent('challenge', `« ${challenge.title} » repasse en non fait (${by})`, { scope: 'all' });
   store.save();
   return challenge;
