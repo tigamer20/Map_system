@@ -21,6 +21,9 @@ l'explique dans les logs du serveur.
 
 - `hunters` : `"spied"` (par défaut, conforme aux règles imprimées — les espionnés
   traquent les espions) ou `"spy"` pour inverser les rôles.
+- `permanentReveal` : équipe qui voit ses adversaires **en continu**, sans demande ni
+  validation. Par défaut la proie (`"spy"`, les espions voient les espionnés arriver).
+  Mettez `"none"` pour que les deux équipes doivent tout demander.
 - `durationMin` : durée de la partie en minutes (300 = 5 h).
 - `appName` : nom affiché sur l'écran de connexion.
 

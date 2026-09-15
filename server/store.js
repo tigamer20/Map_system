@@ -123,8 +123,16 @@ function defaultJokers() {
 /** Round settings: who hunts whom, how long the round lasts, what it is called. */
 function defaultSettings() {
   const custom = readConfig('game.json') || {};
+  const hunters = custom.hunters === 'spy' ? 'spy' : 'spied';
   return {
-    hunters: custom.hunters === 'spy' ? 'spy' : 'spied',
+    hunters,
+    // Équipe qui voit ses adversaires en permanence, sans rien demander.
+    // Par défaut la proie : les espions voient les espionnés arriver.
+    permanentReveal: ['spy', 'spied', 'none'].includes(custom.permanentReveal)
+      ? custom.permanentReveal
+      : hunters === 'spied'
+      ? 'spy'
+      : 'spied',
     durationMin: Number(custom.durationMin) > 0 ? Number(custom.durationMin) : 300,
     appName: process.env.APP_NAME || custom.appName || 'TRAQUE'
   };

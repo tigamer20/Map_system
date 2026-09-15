@@ -4,8 +4,8 @@ Une application web pour jouer à la traque en ville : deux équipes, un maître
 qui valide tout, et un grand écran spectateur qui voit tout.
 
 - **Espions** — ils doivent remplir leurs défis et leur quota de photos **sans se faire
-  trouver**. Leur téléphone envoie leur position, mais personne ne la voit sans
-  validation du maître du jeu.
+  trouver**. Ils voient les espionnés **en permanence** sur la carte, de quoi anticiper.
+  Leur propre position, elle, n'est visible qu'après validation du maître du jeu.
 - **Espionnés** — ils **traquent les espions**. Ils demandent l'accès à leur position,
   et le maître du jeu accorde ou refuse.
 - **Maître du jeu** — valide les demandes de localisation et les défis qui débloquent
@@ -134,6 +134,7 @@ pour la liste des effets disponibles.
 ## Déroulé d'une partie
 
 1. Chacun se connecte avec son code. Les téléphones des joueurs envoient leur position.
+   Les espions voient aussitôt les espionnés sur leur carte, en continu.
 2. Les espionnés demandent la position des espions depuis l'onglet **Demandes** :
    **suivi en direct** (fenêtre avec compte à rebours) ou **envoi ponctuel** (un seul
    point figé sur la carte).

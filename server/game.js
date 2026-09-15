@@ -68,9 +68,15 @@ function isBlocked(team) {
   return store.get().game.blocks[team].until > now();
 }
 
+/** Vision permanente : la proie voit ses poursuivants en continu. */
+function hasPermanentReveal(team) {
+  return settings().permanentReveal === team;
+}
+
 function canSeeOpponents(team) {
-  const g = store.get().game;
-  return g.reveals[team].until > now() && !isBlocked(team);
+  if (isBlocked(team)) return false;
+  if (hasPermanentReveal(team)) return true;
+  return store.get().game.reveals[team].until > now();
 }
 
 function visibleFor(session) {
@@ -411,7 +417,9 @@ function snapshotFor(session) {
       role: session.role,
       team: session.team,
       label: session.label,
-      isHunter: session.role === 'player' ? session.team === hunters : false
+      isHunter: session.role === 'player' ? session.team === hunters : false,
+      seesAlways: session.role === 'player' ? hasPermanentReveal(session.team) : false,
+      seenAlways: session.role === 'player' ? hasPermanentReveal(otherTeam(session.team)) : false
     },
     game: {
       status: s.game.status,
@@ -471,6 +479,7 @@ module.exports = {
   startClock,
   stopClock,
   canSeeOpponents,
+  hasPermanentReveal,
   isBlocked,
   isHunter,
   addEvent,
