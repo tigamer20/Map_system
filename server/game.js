@@ -709,6 +709,16 @@ function startCountdown(seconds, minutes) {
   return delay;
 }
 
+/** Annule un décompte en cours : la partie retourne en salon d'attente. */
+function cancelCountdown() {
+  const s = store.get();
+  if (s.game.status !== 'countdown') throw new Error('Aucun décompte en cours.');
+  s.game.status = 'lobby';
+  s.game.startsAt = null;
+  addEvent('clock', 'Départ annulé par le maître du jeu', { scope: 'all' });
+  store.save();
+}
+
 /** Bascule réellement en partie : appelé au terme du décompte. */
 function startClock(minutes) {
   const s = store.get();
@@ -817,6 +827,7 @@ module.exports = {
   isPaused,
   startClock,
   startCountdown,
+  cancelCountdown,
   stopClock,
   isAdmitted,
   requestAdmission,

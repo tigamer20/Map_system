@@ -381,6 +381,22 @@ app.post('/api/admin/clock', auth, adminOnly, async (req, res) => {
       return res.json({ ok: true });
     }
 
+    if (req.body.action === 'cancel') {
+      clearTimeout(compteARebours);
+      compteARebours = null;
+      game.cancelCountdown();
+      broadcast();
+      for (const team of ['spy', 'spied']) {
+        await notifyTeam(team, {
+          title: 'Départ annulé',
+          body: 'Le maître du jeu a annulé le décompte.',
+          kind: 'announce',
+          inApp: false
+        });
+      }
+      return res.json({ ok: true });
+    }
+
     // Départ : un décompte visible et sonore, puis la partie démarre d'elle-même.
     const delay = game.startCountdown(req.body.seconds, req.body.minutes);
     broadcast();
