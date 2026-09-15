@@ -397,10 +397,19 @@
     if (isPlayer) {
       const reveal = snapshot.game.reveals[me.team];
       const remaining = reveal.until - now();
+      const other = me.team === 'spy' ? 'spied' : 'spy';
+      if (me.seesAlways && !snapshot.jammed) {
+        html += `<div class="card accent"><div class="card-title">Vision permanente</div>
+          <div class="card-sub">Vous voyez les ${TEAM_ONE[other]} sur la carte en continu, sans rien demander.</div></div>`;
+      }
+      if (me.seenAlways) {
+        html += `<div class="card alertish"><div class="card-title">Vous êtes visibles en permanence</div>
+          <div class="card-sub">Les ${TEAM_ONE[other]} voient votre position en continu. À vous de leur échapper.</div></div>`;
+      }
       if (snapshot.jammed) {
         html += `<div class="card alertish"><div class="card-title">Demandes bloquées</div>
           <div class="card-sub">Un joker adverse vous bloque encore ${fmtClock(snapshot.game.blocks[me.team].until - now())}.</div></div>`;
-      } else if (remaining > 0) {
+      } else if (remaining > 0 && !me.seesAlways) {
         html += `<div class="card accent"><div class="card-title">Suivi en direct — <span class="countdown">${fmtClock(remaining)}</span></div>
           <div class="card-sub">Vous voyez les ${TEAM_ONE[me.team === 'spy' ? 'spied' : 'spy']} sur la carte jusqu'à la fin du compte à rebours.</div></div>`;
       }
@@ -421,6 +430,8 @@
     html += `<div class="section-label">${isPlayer ? 'Équipe adverse' : 'Espionnés'}</div>`;
     if (second.length) {
       html += second.map(playerCard).join('');
+    } else if (isPlayer && me.seesAlways) {
+      html += `<div class="empty">Aucun ${TEAM_ONE[me.team === 'spy' ? 'spied' : 'spy'].replace(/s$/, '')} n'a encore partagé sa position.</div>`;
     } else if (isPlayer && me.isHunter) {
       html += `<div class="empty">Aucun accès à la position des ${TEAM_ONE[me.team === 'spy' ? 'spied' : 'spy']}.<br />Faites une demande depuis l'onglet Demandes.</div>`;
     } else {
@@ -515,10 +526,17 @@
           </div>
         </div>`;
       } else {
+        const other = me.team === 'spy' ? 'spied' : 'spy';
         html += `<div class="card alertish">
           <div class="card-title">Vous êtes traqués</div>
-          <div class="card-sub">Les ${TEAM_ONE[me.team === 'spy' ? 'spied' : 'spy']} doivent passer par le maître du jeu pour obtenir votre position. Vous êtes prévenus à chaque fois.</div>
+          <div class="card-sub">Les ${TEAM_ONE[other]} doivent passer par le maître du jeu pour obtenir votre position. Vous êtes prévenus à chaque fois.</div>
         </div>`;
+        if (me.seesAlways) {
+          html += `<div class="card accent">
+            <div class="card-title">Rien à demander de votre côté</div>
+            <div class="card-sub">Vous voyez les ${TEAM_ONE[other]} en permanence sur l'onglet Carte. Vos jokers se débloquent dans l'onglet Jokers.</div>
+          </div>`;
+        }
       }
 
       html += '<div class="section-label">Historique de votre équipe</div>';
@@ -606,17 +624,20 @@
       const reveal = g.reveals[team];
       const block = g.blocks[team];
       const remaining = reveal.until - now();
+      const permanent = g.settings.permanentReveal === team;
       html += `<div class="card ${team}">
         <div class="card-title">${TEAM[team]} voient les ${TEAM_ONE[team === 'spy' ? 'spied' : 'spy']}</div>
         <div class="card-sub">${
           block.until > now()
             ? `Bloqué ${fmtClock(block.until - now())} (${escapeHtml(block.reason || 'joker')})`
+            : permanent
+            ? 'Permanent — règle du jeu, rien à accorder'
             : remaining > 0
             ? `Actif — <span class="countdown">${fmtClock(remaining)}</span>`
             : 'Aucun accès'
         }</div>
         ${
-          isAdmin
+          isAdmin && !permanent
             ? `<div class="card-actions">
                 <button class="btn small" data-reveal="${team}" data-minutes="3">+3 min</button>
                 <button class="btn ghost small" data-reveal="${team}" data-minutes="10">+10 min</button>
