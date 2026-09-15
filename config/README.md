@@ -46,6 +46,14 @@ Un tableau d'objets, dans l'ordre d'affichage :
   l'équipe concernée et le maître du jeu seulement.
 - `team` : `"spied"` par défaut. Mettez `"spy"` pour donner la liste aux espions.
 - `id` : facultatif, calculé sinon (`defi_1`, `defi_2`…).
+- `answer` : réponse à fournir en plus, pour valider le défi.
+  - `"ranking"` : un menu déroulant par position, rempli avec les noms de l'équipe
+    (« 1 — le plus cave » … « le plus intelligent »). Les doublons et les classements
+    incomplets sont refusés, et le maître du jeu voit le résultat.
+  - `"text"` : une réponse libre.
+
+Le fichier livré (`defis.json`) contient les défis réels de la partie ; `defis.json.example`
+garde une liste générique si vous voulez repartir de zéro.
 
 Le joker « Défi annulé » des espions pioche dans les défis **validés** de l'autre
 équipe : celui qui est choisi repasse en non fait et sa photo est effacée.

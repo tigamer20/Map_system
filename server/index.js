@@ -186,6 +186,8 @@ app.post('/api/joker/play', auth, async (req, res) => {
 app.post('/api/challenge/complete', auth, express.json({ limit: '8mb' }), (req, res) => {
   try {
     if (req.session.role !== 'player') throw new Error('Réservé aux joueurs.');
+    // Avant tout : pendant une pause, rien n'est accepté et aucune photo n'est écrite.
+    if (game.isPaused()) throw new Error('La partie est en pause.');
     const challenge = game.findChallenge(req.body.id);
     if (!challenge) throw new Error('Défi inconnu.');
 
@@ -199,7 +201,7 @@ app.post('/api/challenge/complete', auth, express.json({ limit: '8mb' }), (req, 
       fs.writeFileSync(path.join(UPLOAD_DIR, file), buffer);
     }
 
-    game.completeChallenge(req.session, challenge.id, file);
+    game.completeChallenge(req.session, challenge.id, file, req.body.answer);
     broadcast();
     notifyRoles(['admin'], {
       title: 'Défi validé',

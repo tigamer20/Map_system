@@ -181,9 +181,15 @@ button { cursor: pointer; border: none; background: none; }
 .sheet-handle { padding: 10px 0 6px; display: grid; place-items: center; cursor: grab; }
 .sheet-handle span { width: 40px; height: 4px; border-radius: 2px; background: var(--line-strong); }
 
-.tabs { display: flex; gap: 5px; padding: 0 12px 10px; overflow-x: auto; scrollbar-width: none; }
+.tabs {
+  display: flex; flex: none; gap: 5px; padding: 0 12px 10px; overflow-x: auto;
+  scrollbar-width: none; scroll-padding-inline: 12px;
+}
 .tabs::-webkit-scrollbar { display: none; }
 .tab {
+  /* flex: none — sinon, à 5 onglets, flexbox comprime le bouton sous la largeur
+     de son texte, qui déborde alors de la pastille. La rangée défile à la place. */
+  flex: none;
   padding: 8px 12px; border-radius: 11px; font-size: 12.5px; font-weight: 600;
   color: var(--muted); background: var(--surface-2); white-space: nowrap;
   border: 1px solid transparent;
@@ -366,4 +372,10 @@ button { cursor: pointer; border: none; background: none; }
   background: rgba(23, 26, 33, 0.82) !important;
   color: var(--text) !important;
   border-color: var(--line-strong) !important;
+}
+
+/* À 5 onglets, la rangée dépasse un écran de téléphone : deux lignes valent mieux
+   qu'un défilement horizontal que personne ne devine. */
+@media (max-width: 460px) {
+  .tabs { flex-wrap: wrap; overflow: visible; }
 }

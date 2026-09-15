@@ -581,6 +581,36 @@
     return html;
   }
 
+  /** Un menu déroulant par position, rempli avec les noms de l'équipe. */
+  function rankingFields(challenge) {
+    const team = snapshot.teammates || [];
+    if (!team.length) return '<div class="req">Aucun coéquipier connu pour établir le classement.</div>';
+    const rank = (i) =>
+      i === 0 ? '1 — le plus cave' : i === team.length - 1 ? `${i + 1} — le plus intelligent` : String(i + 1);
+    return `<div class="req"><b>Classement donné par l'inconnu</b>
+      ${team
+        .map(
+          (_, i) => `<div class="field" style="margin-top:8px"><label for="rank_${challenge.id}_${i}">${rank(i)}</label>
+            <select id="rank_${challenge.id}_${i}" data-rank="${challenge.id}">
+              <option value="">—</option>
+              ${team.map((m) => `<option value="${escapeHtml(m.label)}">${escapeHtml(m.label)}</option>`).join('')}
+            </select></div>`
+        )
+        .join('')}
+    </div>`;
+  }
+
+  function readRanking(challenge) {
+    const team = snapshot.teammates || [];
+    const values = team.map((_, i) => {
+      const node = el(`rank_${challenge.id}_${i}`);
+      return node ? node.value : '';
+    });
+    if (values.some((v) => !v)) throw new Error('Complétez tout le classement.');
+    if (new Set(values).size !== values.length) throw new Error('Un joueur apparaît deux fois.');
+    return values;
+  }
+
   function renderChallengesPanel() {
     const me = snapshot.me;
     const mine = (snapshot.challenges || []).filter((c) => c.team === me.team);
@@ -600,6 +630,7 @@
             return `<div class="card ${challenge.team}">
               <div class="card-title">${escapeHtml(challenge.title)}</div>
               ${challenge.description ? `<div class="card-sub">${escapeHtml(challenge.description)}</div>` : ''}
+              ${challenge.answer === 'ranking' ? rankingFields(challenge) : ''}
               ${
                 challenge.photo
                   ? `<div class="req"><b>Photo obligatoire</b>
@@ -634,6 +665,7 @@
               </div>
               <span class="pill ok">Fait</span>
             </div>
+            ${answerLine(challenge)}
             ${
               challenge.photoFile
                 ? `<img src="/api/challenge/photo/${challenge.id}?token=${encodeURIComponent(token)}" alt="Photo du défi" style="width:100%;border-radius:10px;margin-top:10px" />`
@@ -644,6 +676,15 @@
         .join('');
     }
     return html;
+  }
+
+  /** Restitution lisible d'une réponse de défi (classement ou texte). */
+  function answerLine(challenge) {
+    if (!challenge.answerValue) return '';
+    const value = Array.isArray(challenge.answerValue)
+      ? challenge.answerValue.map((name, i) => `${i + 1}. ${escapeHtml(name)}`).join(' · ')
+      : escapeHtml(challenge.answerValue);
+    return `<div class="req"><b>Réponse</b>${value}</div>`;
   }
 
   function renderRequestsPanel() {
@@ -855,6 +896,7 @@
                 </div>
                 <span class="pill ${challenge.done ? 'ok' : 'used'}">${challenge.done ? 'Fait' : 'À faire'}</span>
               </div>
+              ${answerLine(challenge)}
               ${
                 challenge.photoFile
                   ? `<img src="/api/challenge/photo/${challenge.id}?token=${encodeURIComponent(token)}" alt="Photo du défi" style="width:100%;border-radius:10px;margin-top:10px" />`
@@ -1137,11 +1179,18 @@
     body.querySelectorAll('[data-complete]').forEach((node) =>
       node.addEventListener('click', async () => {
         const id = node.dataset.complete;
+        const challenge = (snapshot.challenges || []).find((c) => c.id === id);
+        let answer;
+        try {
+          if (challenge && challenge.answer === 'ranking') answer = readRanking(challenge);
+        } catch (err) {
+          return toast(err.message, 'error');
+        }
         node.disabled = true;
         try {
           await api('/api/challenge/complete', {
             method: 'POST',
-            body: JSON.stringify({ id, photo: pendingPhotos[id] })
+            body: JSON.stringify({ id, photo: pendingPhotos[id], answer })
           });
           delete pendingPhotos[id];
           toast('Défi validé.', 'ok');
