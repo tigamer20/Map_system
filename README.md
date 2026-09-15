@@ -147,8 +147,10 @@ pour la liste des effets disponibles.
 ## Notifications sur téléphone
 
 Chaque alerte s'affiche dans l'app avec un son et une vibration. Pour recevoir aussi les
-alertes **téléphone verrouillé**, appuyez sur *Activer les notifications* dans
-l'onglet Contrôle :
+alertes **téléphone verrouillé**, appuyez sur *Activer les notifications* : les joueurs
+le trouvent tout en bas de l'onglet **Carte**, le maître du jeu dans **Contrôle** et le
+spectateur dans **Résumé**, sur la carte « Cet appareil » (même endroit que la
+déconnexion).
 
 - **Android** : fonctionne directement dans Chrome.
 - **iPhone** : Safari → Partager → *Sur l'écran d'accueil*, ouvrir l'app depuis l'icône,
@@ -156,18 +158,36 @@ l'onglet Contrôle :
 
 ## La carte
 
-Trois fonds, le bouton en haut à droite les enchaîne :
+Trois fonds, le bouton calques (en haut à droite) les enchaîne :
 
 1. **Plan sombre** (par défaut) — assorti à l'interface, façon plan de nuit.
-2. **Plan détaillé** — c'est celui qui affiche le plus de commerces et de noms de rues.
+2. **Plan détaillé** — celui qui affiche le plus de commerces et de noms de rues.
 3. **Satellite** — imagerie Esri avec les libellés.
 
-Avec une clé [MapTiler](https://www.maptiler.com/) gratuite, les deux plans passent en
-vectoriel (POI plus nets, numéros de rue, transports) :
+Sans aucune clé, l'app utilise les tuiles **OpenStreetMap** : elles ne demandent rien,
+affichent les commerces à partir du zoom 17, et le plan sombre est obtenu en assombrissant
+ces mêmes tuiles. C'est suffisant pour jouer, mais la politique d'usage d'OSM vise les
+petits volumes — pour une partie filmée avec beaucoup de spectateurs, prenez une clé.
+
+**CARTO** (gratuit, plans Voyager et dark matter, rendu plus soigné) :
+
+```bash
+CARTO_KEY=votre_cle npm start
+```
+
+**MapTiler** (gratuit, rendu vectoriel : POI plus nets, numéros de rue, transports —
+le plus proche d'Apple Maps) :
 
 ```bash
 MAPTILER_KEY=votre_cle npm start
 ```
+
+MapTiler prend le dessus s'il est défini, sinon CARTO, sinon OpenStreetMap. Si une clé est
+refusée ou expirée, l'app le détecte, affiche un message et repasse toute seule sur
+OpenStreetMap plutôt que de laisser une carte vide.
+
+> Mettez ces clés dans les variables d'environnement de l'hébergeur, **jamais dans le
+> dépôt** : une clé publiée est une clé que n'importe qui peut épuiser.
 
 ## Variables d'environnement
 
@@ -176,7 +196,8 @@ MAPTILER_KEY=votre_cle npm start
 | `PORT` | `3000` | Port HTTP (fourni par Render) |
 | `APP_NAME` | `TRAQUE` | Titre sur l'écran de connexion |
 | `ACCESS_CODES` | — | Codes fixes : `code:rôle:nom,…` |
-| `MAPTILER_KEY` | — | Active les fonds vectoriels MapTiler |
+| `CARTO_KEY` | — | Active les fonds CARTO (clé gratuite, obligatoire depuis 2024) |
+| `MAPTILER_KEY` | — | Active les fonds vectoriels MapTiler (prioritaire sur CARTO) |
 | `VAPID_PUBLIC_KEY` / `VAPID_PRIVATE_KEY` | générées | Clés des notifications push |
 | `DATA_DIR` | `./data` | Emplacement de `state.json` |
 | `PUSH_SUBJECT` | `mailto:admin@example.com` | Contact envoyé avec le push |

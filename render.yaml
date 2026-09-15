@@ -26,6 +26,9 @@ services:
         sync: false
       - key: VAPID_PRIVATE_KEY
         sync: false
-      # Optionnel : fond de carte vectoriel MapTiler.
+      # Optionnel : fonds de carte. CARTO_KEY pour les plans Voyager / dark matter,
+      # MAPTILER_KEY pour le rendu vectoriel. Sans clé, l'app utilise OpenStreetMap.
+      - key: CARTO_KEY
+        sync: false
       - key: MAPTILER_KEY
         sync: false
