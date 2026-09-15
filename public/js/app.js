@@ -1520,6 +1520,13 @@
       node.addEventListener('click', async () => {
         const secondes = el('countSeconds') ? Number(el('countSeconds').value) : 10;
         if (node.dataset.clock === 'start' && !confirm(`Lancer le décompte de ${secondes} secondes ?`)) return;
+        if (node.dataset.clock === 'stop') {
+          // Arrêter coupe le chrono pour tout le monde : on demande confirmation, en rappelant le temps restant.
+          const reste = snapshot && snapshot.game.endsAt ? snapshot.game.endsAt - now() : 0;
+          const detail = reste > 0 ? `Il reste ${fmtClock(reste)} au chrono.\n\n` : '';
+          const message = `Arrêter la partie maintenant ?\n\n${detail}Le chrono s'arrête et tout le monde reçoit « Partie terminée ».`;
+          if (!confirm(message)) return;
+        }
         try {
           await api('/api/admin/clock', {
             method: 'POST',
