@@ -132,6 +132,7 @@ function findJoker(team, jokerId) {
  */
 function createRequest(session, type, payload = {}) {
   const s = store.get();
+  assertRunning();
   if (session.role !== 'player') throw new Error('Seuls les joueurs peuvent envoyer une demande.');
 
   if (type === 'location') {
@@ -318,13 +319,22 @@ function freezeTeam(team, seconds, label) {
 /** Play a joker. `detail` is the free-text the rules ask the player for. */
 function playJoker(team, jokerId, options = {}) {
   const s = store.get();
+  assertRunning();
   const joker = findJoker(team, jokerId);
   if (!joker) throw new Error('Joker inconnu.');
   if (joker.usedAt) throw new Error('Ce joker a déjà été utilisé.');
   if (joker.requiresUnlock && !joker.unlocked) throw new Error('Ce joker doit d’abord être débloqué.');
 
-  const detail = String(options.detail || '').slice(0, 160).trim();
-  if (joker.prompt && !detail) throw new Error('Précisez votre joker avant de le jouer.');
+  let detail = String(options.detail || '').slice(0, 160).trim();
+  let targetChallenge = null;
+  if (joker.picksChallenge) {
+    targetChallenge = findChallenge(options.challengeId);
+    if (!targetChallenge) throw new Error('Choisissez un défi à annuler.');
+    if (!targetChallenge.done) throw new Error("Ce défi n'est pas validé, il n'y a rien à annuler.");
+    detail = targetChallenge.title;
+  } else if (joker.prompt && !detail) {
+    throw new Error('Précisez votre joker avant de le jouer.');
+  }
   const grantsReveal = joker.effect === 'reveal_opponents' || joker.effect === 'reveal_live';
   if (grantsReveal && isBlocked(team)) {
     throw new Error('Votre équipe est bloquée : gardez ce joker pour plus tard.');
@@ -358,6 +368,8 @@ function playJoker(team, jokerId, options = {}) {
       }
       break;
     case 'notify':
+      if (targetChallenge) resetChallenge(targetChallenge.id, `joker des ${teamName(team).toLowerCase()}`);
+      break;
     default:
       break;
   }
@@ -382,6 +394,98 @@ function playJoker(team, jokerId, options = {}) {
 
   store.save();
   return notify;
+}
+
+/* ------------------------------------------------------------------ pause */
+
+function isPaused() {
+  return store.get().game.status === 'paused';
+}
+
+/** Rien ne doit avancer pendant une pause : ni demande, ni joker, ni défi. */
+function assertRunning() {
+  if (isPaused()) throw new Error('La partie est en pause.');
+}
+
+function pauseGame(message) {
+  const s = store.get();
+  if (s.game.status === 'paused') throw new Error('La partie est déjà en pause.');
+  s.game.status = 'paused';
+  s.game.pausedAt = now();
+  s.game.pauseMessage = String(message || '').slice(0, 300) || 'Pause décidée par le maître du jeu.';
+  addEvent('clock', `Partie en pause : ${s.game.pauseMessage}`, { scope: 'all' });
+  store.save();
+  return s.game.pauseMessage;
+}
+
+function resumeGame() {
+  const s = store.get();
+  if (s.game.status !== 'paused') throw new Error("La partie n'est pas en pause.");
+  // Le temps passé en pause est rendu aux joueurs.
+  const elapsed = now() - (s.game.pausedAt || now());
+  s.game.endsAt += elapsed;
+  for (const effect of s.game.effects) effect.until += elapsed;
+  for (const team of ['spy', 'spied']) {
+    if (s.game.reveals[team].until > 0) s.game.reveals[team].until += elapsed;
+    if (s.game.blocks[team].until > 0) s.game.blocks[team].until += elapsed;
+  }
+  s.game.status = 'running';
+  s.game.pausedAt = null;
+  s.game.pauseMessage = null;
+  addEvent('clock', `Reprise de la partie (${Math.round(elapsed / 1000)} s de pause rendues)`, { scope: 'all' });
+  store.save();
+}
+
+/* --------------------------------------------------------------- défis */
+
+function findChallenge(id) {
+  return store.get().game.challenges.find((c) => c.id === id);
+}
+
+function completeChallenge(session, id, photoFile) {
+  assertRunning();
+  const challenge = findChallenge(id);
+  if (!challenge) throw new Error('Défi inconnu.');
+  if (session.role !== 'player' || session.team !== challenge.team) {
+    throw new Error("Ce défi n'est pas le vôtre.");
+  }
+  if (challenge.done) throw new Error('Ce défi est déjà validé.');
+  if (challenge.photo && !photoFile) throw new Error('Ce défi demande une photo.');
+
+  challenge.done = true;
+  challenge.doneAt = now();
+  challenge.doneBy = session.label;
+  challenge.photoFile = photoFile || null;
+  addEvent('challenge', `${teamName(challenge.team)} valident « ${challenge.title} »`, { scope: 'all' });
+  store.save();
+  return challenge;
+}
+
+/** Remet un défi en « non fait » : joker des espions, ou correction de l'admin. */
+function resetChallenge(id, by) {
+  const challenge = findChallenge(id);
+  if (!challenge) throw new Error('Défi inconnu.');
+  if (!challenge.done) throw new Error("Ce défi n'est pas encore validé.");
+  challenge.done = false;
+  challenge.doneAt = null;
+  challenge.doneBy = null;
+  challenge.photoFile = null;
+  addEvent('challenge', `« ${challenge.title} » repasse en non fait (${by})`, { scope: 'all' });
+  store.save();
+  return challenge;
+}
+
+function visibleChallenges(session) {
+  const list = store.get().game.challenges;
+  if (session.role === 'admin' || session.role === 'viewer') return list;
+  if (session.role !== 'player') return [];
+  // Son équipe : tout. L'équipe adverse : seulement les défis validés, sans photo,
+  // ce qu'il faut pour choisir lequel annuler.
+  return list.map((c) =>
+    c.team === session.team
+      ? c
+      : { id: c.id, team: c.team, title: c.title, done: c.done, doneAt: c.doneAt, photo: c.photo }
+  );
 }
 
 /* ------------------------------------------------------------------- clock */
@@ -425,6 +529,8 @@ function snapshotFor(session) {
       status: s.game.status,
       startedAt: s.game.startedAt,
       endsAt: s.game.endsAt,
+      pausedAt: s.game.pausedAt,
+      pauseMessage: s.game.pauseMessage,
       settings: s.game.settings,
       reveals: s.game.reveals,
       blocks: s.game.blocks
@@ -433,6 +539,7 @@ function snapshotFor(session) {
     pins: visiblePins(session),
     effects: visibleEffects(session),
     events: visibleEvents(session),
+    challenges: visibleChallenges(session),
     jokers: session.role === 'player' ? s.game.jokers[session.team] : s.game.jokers,
     canSeeOpponents: session.role === 'player' ? canSeeOpponents(session.team) : true,
     jammed: session.role === 'player' ? isBlocked(session.team) : false
@@ -476,6 +583,12 @@ module.exports = {
   dropSnapshotPins,
   freezeTeam,
   playJoker,
+  completeChallenge,
+  resetChallenge,
+  findChallenge,
+  pauseGame,
+  resumeGame,
+  isPaused,
   startClock,
   stopClock,
   canSeeOpponents,

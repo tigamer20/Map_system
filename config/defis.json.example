@@ -1,0 +1,14 @@
+[
+  { "title": "Photo devant une fontaine", "photo": true },
+  { "title": "Boire quelque chose dans un bar ou un café", "photo": true },
+  { "title": "Prendre un transport en commun sur au moins 3 arrêts", "photo": true },
+  { "title": "Trouver une plaque de rue qui porte un prénom", "photo": true },
+  { "title": "Monter au point le plus haut accessible du quartier", "photo": true },
+  { "title": "Acheter quelque chose à moins de 2 €", "photo": true },
+  { "title": "Faire un high-five à un inconnu", "photo": false },
+  {
+    "title": "Chanter 30 secondes dans un lieu public",
+    "description": "Le refrain suffit, mais il faut que des gens entendent.",
+    "photo": false
+  }
+]

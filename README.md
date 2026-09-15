@@ -10,7 +10,8 @@ qui valide tout, et un grand écran spectateur qui voit tout.
   et le maître du jeu accorde ou refuse.
 - **Maître du jeu** — valide les demandes de localisation et les défis qui débloquent
   les jokers, peut ouvrir ou couper un suivi, immobiliser une équipe, envoyer un
-  message, gérer les codes, relancer le chrono.
+  message, gérer les codes, relancer le chrono et **mettre la partie en pause** avec
+  un message affiché sur tous les écrans.
 - **Spectateur** — écran de commentaire : les deux équipes en direct, le journal et les
   distances, sans aucune action possible.
 
@@ -141,9 +142,34 @@ pour la liste des effets disponibles.
 3. Le maître du jeu voit la demande dans **Validations** et accorde 3 min, 10 min, ou refuse.
 4. Les espions reçoivent aussitôt l'alerte « Vous êtes repérés » sur leur téléphone.
 5. Les jokers s'utilisent depuis l'onglet **Jokers** de chaque équipe.
-6. Le maître du jeu suit le chrono de 5 h et peut, à tout moment, ouvrir ou couper un
+6. Les espionnés remplissent leurs **défis** depuis leur onglet dédié ; certains
+   demandent une photo, prise et envoyée depuis le téléphone.
+7. Le maître du jeu suit le chrono de 5 h et peut, à tout moment, ouvrir ou couper un
    accès, immobiliser une équipe 30 s ou 2 min (la règle « rester figé 30 secondes après
-   avoir envoyé sa position »), écrire aux équipes ou réinitialiser la partie.
+   avoir envoyé sa position »), écrire aux équipes, **mettre la partie en pause** ou la
+   réinitialiser.
+
+## Les défis
+
+Les espionnés ont un onglet **Défis** listant ce qu'ils doivent accomplir. Un défi se
+valide d'un bouton ; ceux marqués « photo obligatoire » exigent une photo, prise depuis
+le téléphone, redimensionnée par le navigateur avant l'envoi. Elle n'est visible que par
+l'équipe concernée et le maître du jeu.
+
+Le maître du jeu voit l'avancement et les photos dans son onglet **Contrôle**, et peut
+annuler un défi mal validé. Le joker « Défi annulé » des espions, lui, propose la liste
+des défis **déjà validés** : celui qu'ils choisissent repasse en non fait.
+
+La liste par défaut est un exemple — remplacez-la en copiant `config/defis.json.example`
+en `config/defis.json`.
+
+## La pause
+
+Depuis **Contrôle**, le maître du jeu met la partie en pause avec un message libre
+(« Pause repas, on reprend dans 20 minutes »). Tous les écrans, sauf le sien, affichent
+cet écran de pause, et plus personne ne peut jouer un joker, demander une position ou
+valider un défi. À la reprise, **le temps de pause est rendu** : le chrono de fin, les
+compte à rebours de suivi, les blocages et les immobilisations sont tous décalés d'autant.
 
 ## Notifications sur téléphone
 
@@ -153,9 +179,11 @@ le trouvent tout en bas de l'onglet **Carte**, le maître du jeu dans **Contrôl
 spectateur dans **Résumé**, sur la carte « Cet appareil » (même endroit que la
 déconnexion).
 
-- **Android** : fonctionne directement dans Chrome.
-- **iPhone** : Safari → Partager → *Sur l'écran d'accueil*, ouvrir l'app depuis l'icône,
-  puis activer les notifications. iOS ne permet le push web que pour une app installée.
+- **Android / PC** : fonctionne directement dans Chrome, Edge ou Firefox.
+- **iPhone** : obligatoirement iOS 16.4 ou plus récent, et **uniquement depuis l'app
+  installée**. Safari → Partager → *Sur l'écran d'accueil* → ouvrir Traque depuis l'icône
+  → *Activer les notifications*. Tant que l'app est ouverte dans Safari, le bouton le dit
+  et propose l'installation : c'est une limite d'iOS, pas de l'app.
 
 ## La carte
 

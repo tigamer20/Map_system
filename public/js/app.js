@@ -41,6 +41,7 @@
   let lastSent = 0;
   let reconnectDelay = 1000;
   let interactionUntil = 0;
+  const pendingPhotos = {};
 
   const now = () => Date.now() + serverOffset;
 
@@ -110,6 +111,28 @@
     }[c]));
   }
 
+  /** Une photo de téléphone fait 4 Mo : on la redimensionne avant l'envoi. */
+  function compressImage(file, maxSide = 1400, quality = 0.72) {
+    return new Promise((resolve, reject) => {
+      const reader = new FileReader();
+      reader.onerror = () => reject(new Error('lecture impossible'));
+      reader.onload = () => {
+        const img = new Image();
+        img.onerror = () => reject(new Error('image illisible'));
+        img.onload = () => {
+          const scale = Math.min(1, maxSide / Math.max(img.width, img.height));
+          const canvas = document.createElement('canvas');
+          canvas.width = Math.round(img.width * scale);
+          canvas.height = Math.round(img.height * scale);
+          canvas.getContext('2d').drawImage(img, 0, 0, canvas.width, canvas.height);
+          resolve(canvas.toDataURL('image/jpeg', quality));
+        };
+        img.src = reader.result;
+      };
+      reader.readAsDataURL(file);
+    });
+  }
+
   /* ---------------------------------------------------------------- alerts */
 
   let audioCtx = null;
@@ -140,6 +163,9 @@
   const alertQueue = [];
 
   function showAlert(data) {
+    // inApp === false : l'information est déjà à l'écran (écran de pause), seule
+    // la notification push a un intérêt.
+    if (data.inApp === false) return;
     if (data.observer) {
       toast(`${data.title}${data.body ? ' — ' + data.body : ''}`);
       return;
@@ -161,11 +187,19 @@
     chime();
     if (navigator.vibrate) navigator.vibrate([200, 80, 200, 80, 380]);
     if ('Notification' in window && Notification.permission === 'granted' && document.hidden) {
-      try {
-        new Notification(data.title || 'Traque', { body: data.body || '', icon: '/icons/icon.svg', tag: 'traque' });
-      } catch (err) {
-        /* certains navigateurs n'autorisent que les notifications du service worker */
-      }
+      // iOS n'autorise que les notifications émises par le service worker.
+      navigator.serviceWorker.ready
+        .then((registration) =>
+          registration.showNotification(data.title || 'Traque', {
+            body: data.body || '',
+            icon: '/icons/icon-192.png',
+            badge: '/icons/icon-192.png',
+            tag: 'traque',
+            renotify: true,
+            vibrate: [200, 80, 200]
+          })
+        )
+        .catch(() => {});
     }
   }
 
@@ -300,15 +334,37 @@
     return Uint8Array.from([...raw].map((c) => c.charCodeAt(0)));
   }
 
+  const isIOS = () =>
+    /iPad|iPhone|iPod/.test(navigator.userAgent) ||
+    (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);
+
+  const isStandalone = () =>
+    window.navigator.standalone === true ||
+    (window.matchMedia && window.matchMedia('(display-mode: standalone)').matches);
+
   async function enablePush() {
+    // Sur iPhone, le push n'existe que dans une app ajoutée à l'écran d'accueil.
+    if (isIOS() && !isStandalone()) {
+      showAlert({
+        title: 'À installer sur iPhone',
+        body:
+          "Safari n'autorise les notifications que depuis une app installée. Appuyez sur Partager, puis « Sur l'écran d'accueil », ouvrez Traque depuis l'icône et réactivez les notifications.",
+        kind: 'announce'
+      });
+      return;
+    }
     if (!('serviceWorker' in navigator) || !('PushManager' in window) || !config.vapidPublicKey) {
       toast('Notifications indisponibles sur cet appareil.', 'error');
       return;
     }
     try {
-      const registration = await navigator.serviceWorker.register('/sw.js');
+      await navigator.serviceWorker.register('/sw.js');
+      const registration = await navigator.serviceWorker.ready;
       const permission = await Notification.requestPermission();
-      if (permission !== 'granted') return;
+      if (permission !== 'granted') {
+        toast('Notifications refusées dans les réglages du navigateur.', 'error');
+        return;
+      }
       const existing = await registration.pushManager.getSubscription();
       const subscription =
         existing ||
@@ -319,7 +375,7 @@
       await api('/api/push/subscribe', { method: 'POST', body: JSON.stringify(subscription.toJSON()) });
       toast('Notifications activées sur ce téléphone.', 'ok');
     } catch (err) {
-      toast('Notifications indisponibles sur cet appareil.', 'error');
+      toast(`Notifications impossibles : ${err.message}`, 'error');
     }
   }
 
@@ -346,7 +402,11 @@
   };
 
   function renderTabs() {
-    const tabs = TABS[snapshot.me.role] || TABS.player;
+    let tabs = TABS[snapshot.me.role] || TABS.player;
+    const myChallenges = (snapshot.challenges || []).filter((c) => c.team === snapshot.me.team);
+    if (snapshot.me.role === 'player' && myChallenges.length) {
+      tabs = [tabs[0], { id: 'defis', label: 'Défis' }].concat(tabs.slice(1));
+    }
     if (!activeTab) activeTab = tabs[0].id;
 
     const pending = (snapshot.requests || []).filter((r) => r.status === 'pending').length;
@@ -497,7 +557,17 @@
               : ''
           }
           ${
-            !used && !locked && joker.prompt
+            !used && !locked && joker.picksChallenge
+              ? (() => {
+                  const targets = (snapshot.challenges || []).filter((c) => c.team !== joker.team && c.done);
+                  return targets.length
+                    ? `<div class="field" style="margin-top:12px"><label for="target_${joker.id}">Quel défi annuler ?</label>
+                       <select id="target_${joker.id}">${targets
+                         .map((c) => `<option value="${c.id}">${escapeHtml(c.title)}</option>`)
+                         .join('')}</select></div>`
+                    : `<div class="req">L'équipe adverse n'a encore validé aucun défi : rien à annuler pour l'instant.</div>`;
+                })()
+              : !used && !locked && joker.prompt
               ? `<div class="field" style="margin-top:12px"><label for="detail_${joker.id}">${escapeHtml(joker.prompt)}</label>
                  <input id="detail_${joker.id}" maxlength="160" placeholder="Votre réponse" /></div>`
               : ''
@@ -508,6 +578,71 @@
       .join('');
 
     html += `<div class="empty">Chaque joker ne sert qu'une seule fois. L'équipe adverse reçoit une notification dès qu'il est joué.</div>`;
+    return html;
+  }
+
+  function renderChallengesPanel() {
+    const me = snapshot.me;
+    const mine = (snapshot.challenges || []).filter((c) => c.team === me.team);
+    const done = mine.filter((c) => c.done).length;
+
+    let html = `<div class="card accent">
+      <div class="card-title">${done} / ${mine.length} défis validés</div>
+      <div class="card-sub">Un défi annulé par l'équipe adverse repasse en non fait : il faudra le refaire.</div>
+    </div>`;
+
+    html += '<div class="section-label">À faire</div>';
+    const todo = mine.filter((c) => !c.done);
+    html += todo.length
+      ? todo
+          .map((challenge) => {
+            const photo = pendingPhotos[challenge.id];
+            return `<div class="card ${challenge.team}">
+              <div class="card-title">${escapeHtml(challenge.title)}</div>
+              ${challenge.description ? `<div class="card-sub">${escapeHtml(challenge.description)}</div>` : ''}
+              ${
+                challenge.photo
+                  ? `<div class="req"><b>Photo obligatoire</b>
+                      ${
+                        photo
+                          ? `<img src="${photo}" alt="Aperçu" style="width:100%;border-radius:10px;margin-top:8px" />`
+                          : 'Prenez la photo, elle part avec la validation.'
+                      }
+                     </div>
+                     <div class="card-actions">
+                       <label class="btn ghost small" for="photo_${challenge.id}">${photo ? 'Changer la photo' : 'Prendre la photo'}</label>
+                       <input id="photo_${challenge.id}" type="file" accept="image/*" capture="environment" data-photo="${challenge.id}" hidden />
+                       <button class="btn small" data-complete="${challenge.id}"${photo ? '' : ' disabled'}>Valider le défi</button>
+                     </div>`
+                  : `<div class="card-actions"><button class="btn small" data-complete="${challenge.id}">Valider le défi</button></div>`
+              }
+            </div>`;
+          })
+          .join('')
+      : '<div class="empty">Tous vos défis sont validés.</div>';
+
+    const finished = mine.filter((c) => c.done);
+    if (finished.length) {
+      html += '<div class="section-label">Validés</div>';
+      html += finished
+        .map(
+          (challenge) => `<div class="card">
+            <div class="card-head">
+              <div style="flex:1;min-width:0">
+                <div class="card-title">${escapeHtml(challenge.title)}</div>
+                <div class="card-sub">Validé à ${fmtTime(challenge.doneAt)} par ${escapeHtml(challenge.doneBy || '—')}</div>
+              </div>
+              <span class="pill ok">Fait</span>
+            </div>
+            ${
+              challenge.photoFile
+                ? `<img src="/api/challenge/photo/${challenge.id}?token=${encodeURIComponent(token)}" alt="Photo du défi" style="width:100%;border-radius:10px;margin-top:10px" />`
+                : ''
+            }
+          </div>`
+        )
+        .join('');
+    }
     return html;
   }
 
@@ -661,6 +796,20 @@
         </div>
       </div>`;
 
+      html += '<div class="section-label">Mettre la partie en pause</div>';
+      html += `<div class="card">
+        <div class="card-sub">Pendant la pause, plus personne ne peut jouer de joker, demander une position ou valider un défi. Le temps perdu est rendu à la reprise.</div>
+        <div class="field" style="margin-top:10px"><label for="pauseText">Message affiché sur tous les écrans</label>
+          <textarea id="pauseText" rows="2" placeholder="Pause repas, on se retrouve dans 20 minutes."></textarea></div>
+        <div class="card-actions">
+          ${
+            g.status === 'paused'
+              ? '<button class="btn small" data-pause="resume">Reprendre la partie</button>'
+              : '<button class="btn danger small" data-pause="pause">Mettre en pause</button>'
+          }
+        </div>
+      </div>`;
+
       html += '<div class="section-label">Message aux équipes</div>';
       html += `<div class="card">
         <div class="field"><label for="announceText">Message (arrive en alerte sur les téléphones)</label>
@@ -685,6 +834,41 @@
           </div>`;
         });
       });
+
+      const challenges = snapshot.challenges || [];
+      if (challenges.length) {
+        const done = challenges.filter((c) => c.done);
+        html += `<div class="section-label">Défis — ${done.length} / ${challenges.length} validés</div>`;
+        html += challenges
+          .map(
+            (challenge) => `<div class="card ${challenge.team}">
+              <div class="card-head">
+                <div style="flex:1;min-width:0">
+                  <div class="card-title">${escapeHtml(challenge.title)}</div>
+                  <div class="card-sub">${
+                    challenge.done
+                      ? `Validé à ${fmtTime(challenge.doneAt)} par ${escapeHtml(challenge.doneBy || '—')}`
+                      : challenge.photo
+                      ? 'À faire · photo obligatoire'
+                      : 'À faire'
+                  }</div>
+                </div>
+                <span class="pill ${challenge.done ? 'ok' : 'used'}">${challenge.done ? 'Fait' : 'À faire'}</span>
+              </div>
+              ${
+                challenge.photoFile
+                  ? `<img src="/api/challenge/photo/${challenge.id}?token=${encodeURIComponent(token)}" alt="Photo du défi" style="width:100%;border-radius:10px;margin-top:10px" />`
+                  : ''
+              }
+              ${
+                challenge.done
+                  ? `<div class="card-actions"><button class="btn danger small" data-reset-challenge="${challenge.id}">Annuler ce défi</button></div>`
+                  : ''
+              }
+            </div>`
+          )
+          .join('');
+      }
 
       html += '<div class="section-label">Zone sensible</div>';
       html += `<div class="card"><div class="card-sub">Remet à zéro les jokers, les compteurs, les points figés et le journal. Les codes restent valides.</div>
@@ -715,11 +899,14 @@
   function deviceCard() {
     const roleLabel = { player: 'joueur', admin: 'maître du jeu', viewer: 'spectateur' };
     const pushOn = 'Notification' in window && Notification.permission === 'granted';
+    const needsInstall = isIOS() && !isStandalone();
     return `<div class="section-label">Cet appareil</div>
       <div class="card"><div class="card-title">${escapeHtml(snapshot.me.label)}</div>
       <div class="card-sub">Code ${escapeHtml(snapshot.me.code)} · ${roleLabel[snapshot.me.role] || snapshot.me.role}</div>
       <div class="card-actions">
-        <button class="btn ghost small" id="pushBtn">${pushOn ? 'Notifications activées' : 'Activer les notifications'}</button>
+        <button class="btn ghost small" id="pushBtn">${
+          pushOn ? 'Notifications activées' : needsInstall ? "Notifications : installer l'app" : 'Activer les notifications'
+        }</button>
         <button class="btn danger small" id="logoutBtn">Se déconnecter</button>
       </div></div>`;
   }
@@ -781,10 +968,28 @@
       setStatus(`${live} joueur${live === 1 ? '' : 's'} en direct`, live ? 'live' : '');
     }
 
-    const left = snapshot.game.endsAt - now();
+    const paused = snapshot.game.status === 'paused';
+    const pauseLayer = el('pauseLayer');
+    if (paused && me.role !== 'admin') {
+      el('pauseMessage').textContent = snapshot.game.pauseMessage || 'Pause décidée par le maître du jeu.';
+      pauseLayer.hidden = false;
+    } else {
+      pauseLayer.hidden = true;
+    }
+
+    // Pendant la pause, le chrono est gelé à l'instant où elle a commencé.
+    const left =
+      paused && snapshot.game.pausedAt
+        ? snapshot.game.endsAt - snapshot.game.pausedAt
+        : snapshot.game.endsAt - now();
     ui.clockChip.hidden = false;
     ui.clockChip.className = `chip clock${left <= 0 || snapshot.game.status === 'ended' ? ' warn' : left < 15 * 60 * 1000 ? ' warn' : ''}`;
-    ui.clockText.textContent = left <= 0 || snapshot.game.status === 'ended' ? 'Partie terminée' : fmtClock(left);
+    ui.clockText.textContent =
+      snapshot.game.status === 'ended' || left <= 0
+        ? 'Partie terminée'
+        : paused
+        ? `⏸ ${fmtClock(left)}`
+        : fmtClock(left);
 
     gameMap.render(snapshot.players, me.code);
     gameMap.renderPins(snapshot.pins || []);
@@ -797,6 +1002,7 @@
 
     const panels = {
       players: renderPlayersPanel,
+      defis: renderChallengesPanel,
       jokers: renderJokersPanel,
       requests: renderRequestsPanel,
       control: renderControlPanel,
@@ -887,20 +1093,92 @@
       node.addEventListener('click', async () => {
         const joker = (snapshot.jokers || []).find((j) => j.id === node.dataset.play);
         const input = el(`detail_${joker.id}`);
+        const picker = el(`target_${joker.id}`);
         const detail = input ? input.value.trim() : '';
+        const challengeId = picker ? picker.value : undefined;
+        if (joker.picksChallenge && !challengeId) {
+          toast("Aucun défi validé à annuler pour l'instant.", 'error');
+          return;
+        }
         if (joker.prompt && !detail) {
           toast(joker.prompt, 'error');
           if (input) input.focus();
           return;
         }
-        if (!confirm(`Jouer « ${joker.name} » ?\n\n${joker.description}${detail ? `\n\n${detail}` : ''}`)) return;
+        const summary = picker ? picker.options[picker.selectedIndex].text : detail;
+        if (!confirm(`Jouer « ${joker.name} » ?\n\n${joker.description}${summary ? `\n\n${summary}` : ''}`)) return;
         node.disabled = true;
         try {
-          await api('/api/joker/play', { method: 'POST', body: JSON.stringify({ jokerId: joker.id, detail }) });
+          await api('/api/joker/play', {
+            method: 'POST',
+            body: JSON.stringify({ jokerId: joker.id, detail, challengeId })
+          });
           toast('Joker joué.', 'ok');
         } catch (err) {
           toast(err.message, 'error');
           node.disabled = false;
+        }
+      })
+    );
+
+    body.querySelectorAll('[data-photo]').forEach((node) =>
+      node.addEventListener('change', async () => {
+        const file = node.files && node.files[0];
+        if (!file) return;
+        try {
+          pendingPhotos[node.dataset.photo] = await compressImage(file);
+          render(true);
+        } catch (err) {
+          toast('Photo illisible, réessayez.', 'error');
+        }
+      })
+    );
+
+    body.querySelectorAll('[data-complete]').forEach((node) =>
+      node.addEventListener('click', async () => {
+        const id = node.dataset.complete;
+        node.disabled = true;
+        try {
+          await api('/api/challenge/complete', {
+            method: 'POST',
+            body: JSON.stringify({ id, photo: pendingPhotos[id] })
+          });
+          delete pendingPhotos[id];
+          toast('Défi validé.', 'ok');
+          refreshState();
+        } catch (err) {
+          toast(err.message, 'error');
+          node.disabled = false;
+        }
+      })
+    );
+
+    body.querySelectorAll('[data-reset-challenge]').forEach((node) =>
+      node.addEventListener('click', async () => {
+        if (!confirm('Repasser ce défi en non fait ?')) return;
+        try {
+          await api('/api/admin/challenge/reset', {
+            method: 'POST',
+            body: JSON.stringify({ id: node.dataset.resetChallenge })
+          });
+          refreshState();
+        } catch (err) {
+          toast(err.message, 'error');
+        }
+      })
+    );
+
+    body.querySelectorAll('[data-pause]').forEach((node) =>
+      node.addEventListener('click', async () => {
+        try {
+          const input = el('pauseText');
+          await api('/api/admin/pause', {
+            method: 'POST',
+            body: JSON.stringify({ action: node.dataset.pause, message: input ? input.value.trim() : '' })
+          });
+          if (input) input.value = '';
+        } catch (err) {
+          toast(err.message, 'error');
         }
       })
     );
