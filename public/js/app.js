@@ -967,14 +967,17 @@
     let html = '';
 
     if (isAdmin) {
-      const left = g.endsAt ? g.endsAt - now() : g.settings.durationMin * 60 * 1000;
+      const timerEnabled = g.timerEnabled !== false;
+      const left = !timerEnabled ? null : g.endsAt ? g.endsAt - now() : g.settings.durationMin * 60 * 1000;
       const attente = (snapshot.roster || []).filter((e) => e.role === 'player' && !e.admitted).length;
       const etat =
         g.status === 'lobby'
           ? 'Pas encore commencée'
           : g.status === 'countdown'
           ? `Départ dans ${Math.max(0, Math.ceil((g.startsAt - now()) / 1000))} s`
-          : g.status === 'ended' || left <= 0
+          : g.status === 'running' && !timerEnabled
+          ? 'Sans timer'
+          : g.status === 'ended' || (timerEnabled && left <= 0)
           ? 'Terminée'
           : fmtClock(left);
 
@@ -985,7 +988,10 @@
         }</div>
         ${
           g.status === 'lobby' || g.status === 'ended'
-            ? `<div class="field" style="margin-top:10px"><label for="countSeconds">Décompte avant le départ</label>
+            ? `<div class="field" style="margin-top:10px"><label for="clockMode">Mode de démarrage</label>
+                 <select id="clockMode"><option value="countdown">Avec décompte</option><option value="no-timer">Sans timer</option></select>
+               </div>
+               <div class="field"><label for="countSeconds">Décompte avant le départ</label>
                  <select id="countSeconds"><option value="5">5 secondes</option><option value="10" selected>10 secondes</option><option value="30">30 secondes</option><option value="60">1 minute</option></select>
                </div>
                <div class="card-actions"><button class="btn small" data-clock="start" data-minutes="${g.settings.durationMin}">Démarrer la partie</button></div>`
@@ -1279,23 +1285,29 @@
     }
 
     // Pendant la pause, le chrono est gelé à l'instant où elle a commencé.
-    const left = !snapshot.game.endsAt
+    const timerEnabled = snapshot.game.timerEnabled !== false;
+    const left = !timerEnabled
+      ? null
+      : !snapshot.game.endsAt
       ? snapshot.game.settings.durationMin * 60 * 1000
       : paused && snapshot.game.pausedAt
       ? snapshot.game.endsAt - snapshot.game.pausedAt
       : snapshot.game.endsAt - now();
+    const timerExpired = timerEnabled && left <= 0;
     ui.clockChip.hidden = false;
-    ui.clockChip.className = `chip clock${left <= 0 || snapshot.game.status === 'ended' ? ' warn' : left < 15 * 60 * 1000 ? ' warn' : ''}`;
+    ui.clockChip.className = `chip clock${timerExpired || snapshot.game.status === 'ended' ? ' warn' : timerEnabled && left < 15 * 60 * 1000 ? ' warn' : ''}`;
     const etat = snapshot.game.status;
     ui.clockText.textContent =
       etat === 'lobby'
         ? 'En attente'
         : etat === 'countdown'
         ? `Départ dans ${Math.max(0, Math.ceil((snapshot.game.startsAt - now()) / 1000))} s`
-        : etat === 'ended' || left <= 0
+        : etat === 'running' && !timerEnabled
+        ? 'Sans timer'
+        : etat === 'ended' || timerExpired
         ? 'Partie terminée'
         : paused
-        ? `⏸ ${fmtClock(left)}`
+        ? `⏸ ${timerEnabled ? fmtClock(left) : 'Sans timer'}`
         : fmtClock(left);
 
     renderSeparationOverlay();
@@ -1555,7 +1567,13 @@
     body.querySelectorAll('[data-clock]').forEach((node) =>
       node.addEventListener('click', async () => {
         const secondes = el('countSeconds') ? Number(el('countSeconds').value) : 10;
-        if (node.dataset.clock === 'start' && !confirm(`Lancer le décompte de ${secondes} secondes ?`)) return;
+        const sansTimer = node.dataset.clock === 'start' && el('clockMode') && el('clockMode').value === 'no-timer';
+        if (node.dataset.clock === 'start') {
+          const confirmation = sansTimer
+            ? 'Démarrer la partie maintenant sans timer ?'
+            : `Lancer le décompte de ${secondes} secondes ?`;
+          if (!confirm(confirmation)) return;
+        }
         if (node.dataset.clock === 'stop') {
           // Arrêter coupe le chrono pour tout le monde : on demande confirmation, en rappelant le temps restant.
           const reste = snapshot && snapshot.game.endsAt ? snapshot.game.endsAt - now() : 0;
@@ -1569,7 +1587,8 @@
             body: JSON.stringify({
               action: node.dataset.clock,
               minutes: Number(node.dataset.minutes) || undefined,
-              seconds: secondes
+              seconds: secondes,
+              timerEnabled: !sansTimer
             })
           });
         } catch (err) {

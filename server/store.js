@@ -328,6 +328,7 @@ function defaultState() {
       settings,
       // La partie attend le maître du jeu : 'lobby' → 'countdown' → 'running'.
       status: 'lobby',
+      timerEnabled: true,
       startedAt: null,
       startsAt: null,
       endsAt: null,
@@ -371,6 +372,7 @@ function ensureShape(state) {
   merged.game.blocks = Object.assign({}, base.game.blocks, (state.game || {}).blocks || {});
   merged.game.jokers = (state.game || {}).jokers || base.game.jokers;
   merged.game.settings = Object.assign({}, base.game.settings, (state.game || {}).settings || {});
+  merged.game.timerEnabled = (state.game || {}).timerEnabled !== false;
   merged.game.challenges = (state.game || {}).challenges || base.game.challenges;
   merged.game.pausedAt = (state.game || {}).pausedAt || null;
   merged.game.pauseMessage = (state.game || {}).pauseMessage || null;

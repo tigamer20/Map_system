@@ -756,7 +756,7 @@ function resumeGame() {
   if (s.game.status !== 'paused') throw new Error("La partie n'est pas en pause.");
   // Le temps passé en pause est rendu aux joueurs.
   const elapsed = now() - (s.game.pausedAt || now());
-  s.game.endsAt += elapsed;
+  if (s.game.timerEnabled !== false && s.game.endsAt) s.game.endsAt += elapsed;
   for (const effect of s.game.effects) effect.until += elapsed;
   for (const team of ['spy', 'spied']) {
     if (s.game.reveals[team].until > 0) s.game.reveals[team].until += elapsed;
@@ -902,6 +902,7 @@ function startCountdown(seconds, minutes) {
   const duration = Number(minutes) > 0 ? Number(minutes) : s.game.settings.durationMin;
   const delay = Math.min(60, Math.max(3, Number(seconds) || 10));
   s.game.settings.durationMin = duration;
+  s.game.timerEnabled = true;
   s.game.status = 'countdown';
   s.game.startsAt = now() + delay * 1000;
   s.game.startedAt = null;
@@ -922,15 +923,20 @@ function cancelCountdown() {
 }
 
 /** Bascule réellement en partie : appelé au terme du décompte. */
-function startClock(minutes) {
+function startClock(minutes, timerEnabled = true) {
   const s = store.get();
   const duration = Number(minutes) > 0 ? Number(minutes) : s.game.settings.durationMin;
   s.game.settings.durationMin = duration;
+  s.game.timerEnabled = timerEnabled !== false;
   s.game.status = 'running';
   s.game.startsAt = null;
   s.game.startedAt = now();
-  s.game.endsAt = now() + duration * 60 * 1000;
-  addEvent('clock', `La partie commence — ${Math.round(duration / 60)} h`, { scope: 'all' });
+  s.game.endsAt = s.game.timerEnabled ? now() + duration * 60 * 1000 : null;
+  addEvent(
+    'clock',
+    s.game.timerEnabled ? `La partie commence — ${Math.round(duration / 60)} h` : 'La partie commence sans timer',
+    { scope: 'all' }
+  );
   store.save();
 }
 

@@ -397,6 +397,23 @@ app.post('/api/admin/clock', auth, adminOnly, async (req, res) => {
       return res.json({ ok: true });
     }
 
+    if (req.body.timerEnabled === false) {
+      clearTimeout(compteARebours);
+      compteARebours = null;
+      game.startClock(req.body.minutes, false);
+      broadcast();
+      for (const team of ['spy', 'spied']) {
+        await notifyTeam(team, {
+          title: 'La partie commence',
+          body: 'La partie démarre maintenant, sans timer.',
+          kind: 'announce',
+          loud: true,
+          inApp: false
+        });
+      }
+      return res.json({ ok: true, timerEnabled: false });
+    }
+
     // Départ : un décompte visible et sonore, puis la partie démarre d'elle-même.
     const delay = game.startCountdown(req.body.seconds, req.body.minutes);
     broadcast();
