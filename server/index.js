@@ -558,7 +558,39 @@ function sendState(socket) {
 }
 
 let broadcastTimer = null;
+
+function notifySeparationTransition(transition) {
+  if (!transition) return;
+  const payload =
+    transition.state === 'completed'
+      ? {
+          title: 'Séparation terminée',
+          body: 'Les 10 minutes sont écoulées. Vous pouvez à nouveau utiliser la carte.',
+          kind: 'joker',
+          loud: true
+        }
+      : transition.state === 'running'
+      ? {
+          title: 'Distance suffisante',
+          body: `Toutes les distances sont bonnes : le chrono reprend (${Math.ceil(transition.remainingMs / 60000)} min restantes).`,
+          kind: 'joker',
+          loud: true
+        }
+      : {
+          title: 'Séparation insuffisante',
+          body:
+            transition.reason === 'waiting-location'
+              ? 'Une position GPS manque. Le chrono est en pause, gardez l’application ouverte.'
+              : 'Vous êtes trop proches. Éloignez-vous les uns des autres pour reprendre le chrono.',
+          kind: 'joker',
+          loud: true
+        };
+  notifyTeam(transition.team || 'spied', payload).catch((err) => console.error('[separation] notification failed:', err.message));
+}
+
 function broadcast() {
+  const transition = game.refreshSeparation();
+  notifySeparationTransition(transition);
   if (broadcastTimer) return;
   broadcastTimer = setTimeout(() => {
     broadcastTimer = null;

@@ -86,6 +86,21 @@ function defaultJokers() {
         requiresUnlock: true,
         unlocked: false,
         usedAt: null
+      },
+      {
+        id: 'spy_separation',
+        team: 'spy',
+        name: 'Séparation forcée',
+        icon: '↔️',
+        description:
+          "Les espionnés doivent rester à au moins 100 mètres les uns des autres pendant 10 minutes. Le chrono se met en pause dès qu'ils se rapprochent.",
+        effect: 'separation',
+        durationSec: 600,
+        minMeters: 100,
+        targetTeam: 'spied',
+        requiresUnlock: false,
+        unlocked: true,
+        usedAt: null
       }
     ],
     spied: [
@@ -324,6 +339,19 @@ function defaultState() {
       pins: [],
       // Timed constraints shown to a team: [{id, team, label, until}]
       effects: [],
+      // Joker de séparation : les espionnés doivent rester à distance les uns des autres.
+      separation: {
+        active: false,
+        state: 'inactive',
+        team: 'spied',
+        minMeters: 100,
+        durationSec: 600,
+        remainingMs: 600000,
+        activatedAt: null,
+        startedAt: null,
+        completedAt: null,
+        lastTickAt: null
+      },
       jokers,
       challenges,
       pausedAt: null,
@@ -350,6 +378,7 @@ function ensureShape(state) {
   merged.game.startsAt = (state.game || {}).startsAt || null;
   merged.game.pins = (state.game || {}).pins || [];
   merged.game.effects = (state.game || {}).effects || [];
+  merged.game.separation = Object.assign({}, base.game.separation, (state.game || {}).separation || {});
   merged.push = Object.assign({}, base.push, state.push || {});
   merged.codes = state.codes && Object.keys(state.codes).length ? state.codes : base.codes;
   merged.devices = state.devices || {};

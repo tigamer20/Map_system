@@ -596,11 +596,46 @@
     return html;
   }
 
+  function renderSeparationOverlay() {
+    const layer = el('separationLayer');
+    const separation = snapshot.separation || { active: false, state: 'inactive' };
+    const target = snapshot.me.role === 'player' && snapshot.me.team === separation.team;
+    const active = target && separation.active;
+    ui.app.classList.toggle('separation-active', active);
+    layer.hidden = !active;
+    if (!active) return;
+
+    const state = separation.state;
+    el('separationTitle').textContent =
+      state === 'running' ? 'Séparation en cours' : state === 'paused' ? 'Éloignez-vous' : 'Séparation forcée';
+    el('separationBody').textContent =
+      state === 'running'
+        ? `Chrono restant : ${fmtClock(separation.remainingMs)}. Gardez au moins ${separation.minMeters} m avec chaque espionné.`
+        : state === 'paused'
+        ? `Chrono en pause. Éloignez-vous jusqu'à ${separation.minMeters} m de chaque autre espionné pour reprendre.`
+        : `Le chrono commencera lorsque tout le monde sera à au moins ${separation.minMeters} m des autres.`;
+
+    const rows = separation.distances || [];
+    el('separationTable').innerHTML = rows.length
+      ? rows
+          .map((row) => {
+            const status = !row.fresh || row.meters == null ? 'waiting' : row.ok ? 'ok' : 'close';
+            const value =
+              row.meters == null
+                ? 'GPS en attente'
+                : `${fmtDistance(row.meters)}${row.ok ? ' · OK' : ' · Trop proche'}`;
+            return `<div class="separation-row"><span class="name">${escapeHtml(row.name)}</span><span class="distance ${status}">${value}</span></div>`;
+          })
+          .join('')
+      : '<div class="separation-row"><span class="name">Les autres positions sont en attente…</span></div>';
+    el('separationNote').textContent = `${separation.locatedCount || 0}/${separation.totalPlayers || 0} positions GPS reçues. La carte restera inaccessible jusqu'à la fin du joker.`;
+  }
+
   function renderJokersPanel() {
     const jokers = snapshot.jokers || [];
     const pending = (snapshot.myRequests || []).filter((r) => r.status === 'pending' && r.type === 'unlock');
 
-    let html = `<div class="section-label">Vos 2 jokers</div>`;
+    let html = `<div class="section-label">Vos jokers</div>`;
     html += jokers
       .map((joker) => {
         const waiting = pending.find((r) => r.payload.jokerId === joker.id);
@@ -1263,6 +1298,7 @@
         ? `⏸ ${fmtClock(left)}`
         : fmtClock(left);
 
+    renderSeparationOverlay();
     gameMap.render(snapshot.players, me.code);
     gameMap.renderPins(snapshot.pins || []);
 
