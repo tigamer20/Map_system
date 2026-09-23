@@ -125,73 +125,9 @@ button { cursor: pointer; border: none; background: none; }
 #map { position: absolute; inset: 0; }
 /* L'alerte se lit par-dessus l'écran de pause, qui reste visible derrière. */
 #pauseLayer { z-index: 49; }
-#waitLayer { z-index: 52; }
 #countLayer { z-index: 53; }
-#alertLayer { z-index: 70; }
+#alertLayer { z-index: 51; }
 .maplibregl-ctrl-attrib { font-size: 10px; }
-
-/* Le joker de séparation remplace temporairement la carte pour les espionnés. */
-.app.separation-active #map,
-.app.separation-active .topbar,
-.app.separation-active .sheet {
-  visibility: hidden;
-  pointer-events: none;
-}
-
-.separation-layer {
-  position: fixed;
-  inset: 0;
-  z-index: 55;
-  display: grid;
-  place-items: center;
-  overflow-y: auto;
-  padding: 22px;
-  background: rgba(6, 8, 12, 0.94);
-}
-.separation-box {
-  width: min(460px, 100%);
-  max-height: 100%;
-  overflow-y: auto;
-  background: var(--surface);
-  border: 1px solid rgba(255, 107, 129, 0.35);
-  border-radius: 24px;
-  padding: 24px 18px 20px;
-  box-shadow: var(--shadow-lg);
-  text-align: center;
-}
-.separation-box > .icon {
-  width: 62px;
-  height: 62px;
-  margin: 0 auto 14px;
-  border-radius: 20px;
-  display: grid;
-  place-items: center;
-  font-size: 28px;
-  background: var(--spied-soft);
-}
-.separation-box h3 { margin: 0 0 8px; font-size: 20px; }
-.separation-box > p { margin: 0 0 16px; color: var(--muted); line-height: 1.5; }
-.separation-table {
-  overflow: hidden;
-  border: 1px solid var(--line);
-  border-radius: 14px;
-  text-align: left;
-}
-.separation-row {
-  display: grid;
-  grid-template-columns: minmax(0, 1fr) auto;
-  gap: 12px;
-  align-items: center;
-  padding: 12px 13px;
-  border-bottom: 1px solid var(--line);
-}
-.separation-row:last-child { border-bottom: none; }
-.separation-row .name { min-width: 0; font-weight: 600; }
-.separation-row .distance { text-align: right; font-variant-numeric: tabular-nums; }
-.separation-row .distance.ok { color: var(--ok); }
-.separation-row .distance.close { color: var(--danger); }
-.separation-row .distance.waiting { color: var(--warn); }
-.separation-box > .card-sub { margin-top: 14px; }
 
 .topbar {
   position: relative; z-index: 5;

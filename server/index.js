@@ -121,6 +121,9 @@ app.post('/api/login', (req, res) => {
   const entry = s.codes[code];
   if (!entry) return res.status(401).json({ error: 'Code inconnu.' });
 
+  // Les joueurs entrent directement : aucune admission par le maître du jeu.
+  if (entry.role === 'player') entry.admitted = true;
+
   const token = crypto.randomBytes(24).toString('hex');
   s.devices[token] = { code, createdAt: Date.now(), lastSeen: Date.now() };
   store.save();
@@ -135,19 +138,10 @@ app.post('/api/login', (req, res) => {
 
   const session = { token, code, role: entry.role, team: entry.team, label: entry.label };
   const admitted = game.isAdmitted(session);
-  if (!admitted) {
-    game.requestAdmission(session);
-    notifyRoles(['admin'], {
-      title: 'Nouveau joueur',
-      body: `${entry.label} attend votre accord pour entrer.`,
-      kind: 'request'
-    });
-  } else {
-    game.addEvent('join', `${entry.label} s'est connecté`, {
-      team: entry.team,
-      scope: entry.role === 'player' ? 'team' : 'all'
-    });
-  }
+  game.addEvent('join', `${entry.label} s'est connecté`, {
+    team: entry.team,
+    scope: entry.role === 'player' ? 'team' : 'all'
+  });
   broadcast();
 
   res.json({ token, role: entry.role, team: entry.team, label: entry.label, admitted });
@@ -462,7 +456,7 @@ app.post('/api/admin/codes', auth, adminOnly, (req, res) => {
       role: req.body.role || 'player',
       team: req.body.role === 'player' ? req.body.team || 'spy' : null,
       label: String(req.body.label || 'Nouveau joueur').slice(0, 40),
-      admitted: false
+      admitted: true
     };
     store.save(true);
     return res.json({ ok: true, code });
@@ -575,39 +569,7 @@ function sendState(socket) {
 }
 
 let broadcastTimer = null;
-
-function notifySeparationTransition(transition) {
-  if (!transition) return;
-  const payload =
-    transition.state === 'completed'
-      ? {
-          title: 'Séparation terminée',
-          body: 'Les 10 minutes sont écoulées. Vous pouvez à nouveau utiliser la carte.',
-          kind: 'joker',
-          loud: true
-        }
-      : transition.state === 'running'
-      ? {
-          title: 'Distance suffisante',
-          body: `Toutes les distances sont bonnes : le chrono reprend (${Math.ceil(transition.remainingMs / 60000)} min restantes).`,
-          kind: 'joker',
-          loud: true
-        }
-      : {
-          title: 'Séparation insuffisante',
-          body:
-            transition.reason === 'waiting-location'
-              ? 'Une position GPS manque. Le chrono est en pause, gardez l’application ouverte.'
-              : 'Vous êtes trop proches. Éloignez-vous les uns des autres pour reprendre le chrono.',
-          kind: 'joker',
-          loud: true
-        };
-  notifyTeam(transition.team || 'spied', payload).catch((err) => console.error('[separation] notification failed:', err.message));
-}
-
 function broadcast() {
-  const transition = game.refreshSeparation();
-  notifySeparationTransition(transition);
   if (broadcastTimer) return;
   broadcastTimer = setTimeout(() => {
     broadcastTimer = null;

@@ -58,7 +58,6 @@
   let interactionUntil = 0;
   const pendingPhotos = {};
   let dernierTic = null;
-  let etaitAdmis = null;
 
   const now = () => Date.now() + serverOffset;
 
@@ -596,46 +595,11 @@
     return html;
   }
 
-  function renderSeparationOverlay() {
-    const layer = el('separationLayer');
-    const separation = snapshot.separation || { active: false, state: 'inactive' };
-    const target = snapshot.me.role === 'player' && snapshot.me.team === separation.team;
-    const active = target && separation.active;
-    ui.app.classList.toggle('separation-active', active);
-    layer.hidden = !active;
-    if (!active) return;
-
-    const state = separation.state;
-    el('separationTitle').textContent =
-      state === 'running' ? 'Séparation en cours' : state === 'paused' ? 'Éloignez-vous' : 'Séparation forcée';
-    el('separationBody').textContent =
-      state === 'running'
-        ? `Chrono restant : ${fmtClock(separation.remainingMs)}. Gardez au moins ${separation.minMeters} m avec chaque espionné.`
-        : state === 'paused'
-        ? `Chrono en pause. Éloignez-vous jusqu'à ${separation.minMeters} m de chaque autre espionné pour reprendre.`
-        : `Le chrono commencera lorsque tout le monde sera à au moins ${separation.minMeters} m des autres.`;
-
-    const rows = separation.distances || [];
-    el('separationTable').innerHTML = rows.length
-      ? rows
-          .map((row) => {
-            const status = !row.fresh || row.meters == null ? 'waiting' : row.ok ? 'ok' : 'close';
-            const value =
-              row.meters == null
-                ? 'GPS en attente'
-                : `${fmtDistance(row.meters)}${row.ok ? ' · OK' : ' · Trop proche'}`;
-            return `<div class="separation-row"><span class="name">${escapeHtml(row.name)}</span><span class="distance ${status}">${value}</span></div>`;
-          })
-          .join('')
-      : '<div class="separation-row"><span class="name">Les autres positions sont en attente…</span></div>';
-    el('separationNote').textContent = `${separation.locatedCount || 0}/${separation.totalPlayers || 0} positions GPS reçues. La carte restera inaccessible jusqu'à la fin du joker.`;
-  }
-
   function renderJokersPanel() {
     const jokers = snapshot.jokers || [];
     const pending = (snapshot.myRequests || []).filter((r) => r.status === 'pending' && r.type === 'unlock');
 
-    let html = `<div class="section-label">Vos jokers</div>`;
+    let html = `<div class="section-label">Vos 2 jokers</div>`;
     html += jokers
       .map((joker) => {
         const waiting = pending.find((r) => r.payload.jokerId === joker.id);
@@ -969,7 +933,6 @@
     if (isAdmin) {
       const timerEnabled = g.timerEnabled !== false;
       const left = !timerEnabled ? null : g.endsAt ? g.endsAt - now() : g.settings.durationMin * 60 * 1000;
-      const attente = (snapshot.roster || []).filter((e) => e.role === 'player' && !e.admitted).length;
       const etat =
         g.status === 'lobby'
           ? 'Pas encore commencée'
@@ -983,9 +946,7 @@
 
       html += `<div class="card accent">
         <div class="card-title">Partie — <span class="countdown">${etat}</span></div>
-        <div class="card-sub">Durée prévue : ${Math.round(g.settings.durationMin / 60)} h. Traqueurs : ${TEAM[hunters]}.${
-          attente ? ` <b>${attente} joueur(s) en attente d'admission.</b>` : ''
-        }</div>
+        <div class="card-sub">Durée prévue : ${Math.round(g.settings.durationMin / 60)} h. Traqueurs : ${TEAM[hunters]}.</div>
         ${
           g.status === 'lobby' || g.status === 'ended'
             ? `<div class="field" style="margin-top:10px"><label for="clockMode">Mode de démarrage</label>
@@ -1228,33 +1189,6 @@
       setStatus(`${live} joueur${live === 1 ? '' : 's'} en direct`, live ? 'live' : '');
     }
 
-    // À l'instant de l'admission, on pousse sa position : sans cela le joueur
-    // n'apparaît sur la carte qu'au battement suivant, jusqu'à huit secondes plus tard.
-    if (me.role === 'player' && me.admitted === true && etaitAdmis === false) {
-      if (lastFix) sendPosition(lastFix);
-      else if (navigator.geolocation) {
-        navigator.geolocation.getCurrentPosition(
-          (position) => {
-            lastFix = position;
-            myPosition = { lat: position.coords.latitude, lng: position.coords.longitude, accuracy: position.coords.accuracy };
-            sendPosition(position);
-          },
-          () => {},
-          { enableHighAccuracy: true, maximumAge: 5000, timeout: 15000 }
-        );
-      }
-    }
-    if (me.role === 'player') etaitAdmis = me.admitted;
-
-    // Joueur pas encore admis : rien d'autre à faire qu'attendre.
-    const waitLayer = el('waitLayer');
-    if (me.role === 'player' && me.admitted === false) {
-      el('waitMessage').textContent = `Code reconnu : ${me.label} (${TEAM[me.team]}).`;
-      waitLayer.hidden = false;
-    } else {
-      waitLayer.hidden = true;
-    }
-
     // Décompte d'avant-partie : un tic feutré par seconde, un accord au départ.
     const countLayer = el('countLayer');
     if (snapshot.game.status === 'countdown' && snapshot.game.startsAt) {
@@ -1310,7 +1244,6 @@
         ? `⏸ ${timerEnabled ? fmtClock(left) : 'Sans timer'}`
         : fmtClock(left);
 
-    renderSeparationOverlay();
     gameMap.render(snapshot.players, me.code);
     gameMap.renderPins(snapshot.pins || []);
 

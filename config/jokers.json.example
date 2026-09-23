@@ -22,17 +22,6 @@
       "effect": "notify",
       "durationSec": 0,
       "requiresUnlock": true
-    },
-    {
-      "id": "spy_separation",
-      "name": "Séparation forcée",
-      "icon": "↔️",
-      "description": "Les espionnés doivent rester à au moins 100 mètres les uns des autres pendant 10 minutes. Le chrono se met en pause dès qu'ils se rapprochent.",
-      "effect": "separation",
-      "durationSec": 600,
-      "minMeters": 100,
-      "targetTeam": "spied",
-      "requiresUnlock": false
     }
   ],
   "spied": [

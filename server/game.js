@@ -5,7 +5,6 @@ const store = require('./store');
 
 const MAX_EVENTS = 300;
 const POSITION_STALE_MS = 5 * 60 * 1000;
-const SEPARATION_POSITION_MAX_AGE_MS = 20 * 1000;
 
 /** Live positions live in memory only, keyed by code (one code = one player slot). */
 const positions = new Map();
@@ -69,7 +68,7 @@ function derivedSpeed(previous, pos, moment) {
 function setPosition(code, pos) {
   const s = store.get();
   const entry = s.codes[code];
-  if (!entry || entry.role !== 'player' || !entry.admitted) return null;
+  if (!entry || entry.role !== 'player') return null;
 
   const moment = now();
   const previous = positions.get(code);
@@ -92,197 +91,6 @@ function setPosition(code, pos) {
 function allPositions() {
   const cutoff = now() - POSITION_STALE_MS;
   return Array.from(positions.values()).map((p) => Object.assign({}, p, { stale: p.ts < cutoff }));
-}
-
-/* --------------------------------------------------------- separation joker */
-
-function admittedTeamMembers(team) {
-  const s = store.get();
-  return Object.entries(s.codes)
-    .filter(([, entry]) => entry.role === 'player' && entry.team === team && entry.admitted === true)
-    .map(([code, entry]) => ({ code, name: entry.label }));
-}
-
-function separationEvaluation(separation) {
-  const members = admittedTeamMembers(separation.team);
-  const current = now();
-  const rows = members.map((member) => {
-    const position = positions.get(member.code);
-    const fresh = !!position && current - position.ts <= SEPARATION_POSITION_MAX_AGE_MS;
-    return { member, position, fresh };
-  });
-  const pairs = [];
-  let ready = members.length >= 2;
-  let reason = members.length < 2 ? 'not-enough-players' : null;
-
-  for (let i = 0; i < rows.length; i += 1) {
-    for (let j = i + 1; j < rows.length; j += 1) {
-      const a = rows[i];
-      const b = rows[j];
-      const meters = a.position && b.position ? Math.round(metersBetween(a.position, b.position)) : null;
-      const fresh = a.fresh && b.fresh;
-      pairs.push({
-        from: a.member.code,
-        fromName: a.member.name,
-        to: b.member.code,
-        toName: b.member.name,
-        meters,
-        fresh,
-        ok: fresh && meters >= separation.minMeters
-      });
-      if (!fresh) {
-        ready = false;
-        reason = reason || 'waiting-location';
-      } else if (meters < separation.minMeters) {
-        ready = false;
-        reason = reason || 'too-close';
-      }
-    }
-  }
-
-  return {
-    members,
-    rows,
-    pairs,
-    ready,
-    reason,
-    locatedCount: rows.filter((row) => row.fresh).length
-  };
-}
-
-/**
- * Avance le chrono de séparation et renvoie une transition à notifier.
- * Le chrono n'avance que si toutes les positions sont fraîches et toutes les
- * distances respectent le minimum : la règle reste donc vraie côté serveur.
- */
-function refreshSeparation() {
-  const s = store.get();
-  const separation = s.game.separation;
-  if (!separation || !separation.active) return null;
-
-  const evaluation = separationEvaluation(separation);
-  const moment = now();
-  const previousState = separation.state;
-  if (separation.state === 'running' && evaluation.ready) {
-    const elapsed = Math.max(0, moment - (separation.lastTickAt || moment));
-    separation.remainingMs = Math.max(0, separation.remainingMs - elapsed);
-  }
-  separation.lastTickAt = moment;
-
-  let nextState;
-  if (separation.remainingMs <= 0) {
-    separation.remainingMs = 0;
-    separation.active = false;
-    separation.state = 'completed';
-    separation.completedAt = separation.completedAt || moment;
-    addEvent('joker', 'La séparation forcée est terminée', { scope: 'all' });
-  } else if (evaluation.ready && s.game.status === 'running') {
-    nextState = 'running';
-    separation.state = nextState;
-    separation.startedAt = separation.startedAt || moment;
-  } else {
-    nextState = separation.startedAt ? 'paused' : 'waiting';
-    separation.state = nextState;
-  }
-
-  const changed = previousState !== separation.state;
-  if (changed && separation.state !== 'completed') {
-    const text =
-      separation.state === 'running'
-        ? 'Les espionnés sont assez éloignés : le chrono de séparation démarre ou reprend.'
-        : 'Les espionnés sont trop proches ou une position GPS manque : le chrono de séparation est en pause.';
-    addEvent('joker', text, { scope: 'all' });
-  }
-  store.save();
-
-  return changed
-    ? {
-        from: previousState,
-        state: separation.state,
-        team: separation.team,
-        reason: evaluation.reason,
-        remainingMs: separation.remainingMs,
-        minMeters: separation.minMeters
-      }
-    : null;
-}
-
-function startSeparation(team, joker) {
-  const s = store.get();
-  const targetTeam = joker.targetTeam || otherTeam(team);
-  const members = admittedTeamMembers(targetTeam);
-  if (members.length < 2) throw new Error('Il faut au moins deux espionnés admis pour jouer ce joker.');
-  if (s.game.separation && s.game.separation.active) throw new Error('Une séparation est déjà en cours.');
-
-  const durationSec = Math.max(1, Number(joker.durationSec || 600));
-  s.game.separation = {
-    active: true,
-    state: 'waiting',
-    team: targetTeam,
-    minMeters: Math.max(1, Number(joker.minMeters || 100)),
-    durationSec,
-    remainingMs: durationSec * 1000,
-    activatedAt: now(),
-    startedAt: null,
-    completedAt: null,
-    lastTickAt: now()
-  };
-  addEvent('joker', `Séparation forcée activée pour les ${teamName(targetTeam).toLowerCase()}`, { scope: 'all' });
-  store.save();
-}
-
-function separationFor(session) {
-  const s = store.get();
-  const separation = s.game.separation;
-  if (!separation || (!separation.active && separation.state !== 'completed')) {
-    return { active: false, state: 'inactive' };
-  }
-
-  const base = {
-    active: separation.active,
-    state: separation.state,
-    team: separation.team,
-    minMeters: separation.minMeters,
-    durationSec: separation.durationSec,
-    remainingMs: separation.remainingMs,
-    activatedAt: separation.activatedAt,
-    startedAt: separation.startedAt,
-    completedAt: separation.completedAt
-  };
-  const canSeeTable = session.role === 'admin' || session.role === 'viewer' || session.team === separation.team;
-  if (!canSeeTable) return base;
-
-  const evaluation = separationEvaluation(separation);
-  base.locatedCount = evaluation.locatedCount;
-  base.totalPlayers = evaluation.members.length;
-  if (session.role === 'player') {
-    const own = evaluation.rows.find((row) => row.member.code === session.code);
-    base.distances = evaluation.rows
-      .filter((row) => row.member.code !== session.code)
-      .map((row) => {
-        const pair = evaluation.pairs.find(
-          (candidate) =>
-            (candidate.from === session.code && candidate.to === row.member.code) ||
-            (candidate.to === session.code && candidate.from === row.member.code)
-        );
-        return {
-          code: row.member.code,
-          name: row.member.name,
-          meters: pair ? pair.meters : null,
-          fresh: !!own && own.fresh && row.fresh,
-          ok: !!pair && pair.ok
-        };
-      });
-  } else {
-    base.distances = evaluation.pairs.map((pair) => ({
-      from: pair.fromName,
-      to: pair.toName,
-      meters: pair.meters,
-      fresh: pair.fresh,
-      ok: pair.ok
-    }));
-  }
-  return base;
 }
 
 /* -------------------------------------------------------------- visibility */
@@ -617,13 +425,6 @@ function playJoker(team, jokerId, options = {}) {
   if (grantsReveal && isBlocked(team)) {
     throw new Error('Votre équipe est bloquée : gardez ce joker pour plus tard.');
   }
-  if (joker.effect === 'separation') {
-    if (team !== 'spy') throw new Error('Ce joker est réservé aux espions.');
-    if (s.game.separation && s.game.separation.active) throw new Error('Une séparation est déjà en cours.');
-    if (admittedTeamMembers(joker.targetTeam || otherTeam(team)).length < 2) {
-      throw new Error('Il faut au moins deux espionnés admis pour jouer ce joker.');
-    }
-  }
 
   joker.usedAt = now();
   joker.detail = detail || null;
@@ -651,9 +452,6 @@ function playJoker(team, jokerId, options = {}) {
         s.game.blocks[target] = { until: now() + seconds * 1000, reason: joker.name };
         s.game.reveals[target] = { until: 0, grantedBy: null };
       }
-      break;
-    case 'separation':
-      startSeparation(team, joker);
       break;
     case 'notify':
       if (targetChallenge) resetChallenge(targetChallenge.id, `joker des ${teamName(team).toLowerCase()}`);
@@ -684,47 +482,12 @@ function playJoker(team, jokerId, options = {}) {
   return notify;
 }
 
-/* -------------------------------------------------------------- admission */
+/* -------------------------------------------------------------- access */
 
-/** Un joueur n'entre pas dans la partie tant que le maître du jeu ne l'a pas admis. */
+/** Les joueurs entrent directement avec leur code. */
 function isAdmitted(session) {
-  if (session.role !== 'player') return true;
-  return store.get().codes[session.code].admitted === true;
-}
-
-/** Appelé à chaque connexion : crée la demande d'admission si besoin. */
-function requestAdmission(session) {
-  const s = store.get();
-  if (isAdmitted(session)) return null;
-  const existing = s.requests.find(
-    (r) => r.status === 'pending' && r.type === 'join' && r.code === session.code
-  );
-  if (existing) return existing;
-
-  const request = {
-    id: id(),
-    type: 'join',
-    team: session.team,
-    code: session.code,
-    from: session.label,
-    payload: {},
-    status: 'pending',
-    createdAt: now(),
-    decidedAt: null,
-    decidedBy: null,
-    note: null
-  };
-  s.requests.unshift(request);
-  addEvent('join', `${session.label} demande à rejoindre la partie`, { scope: 'all' });
-  store.save();
-  return request;
-}
-
-function admittedPlayers() {
-  const s = store.get();
-  return Object.entries(s.codes)
-    .filter(([, c]) => c.role === 'player' && c.admitted)
-    .map(([code]) => code);
+  // Les codes joueurs sont autonomes : aucune validation du maître du jeu n'est requise.
+  return true;
 }
 
 /* ------------------------------------------------------------------ pause */
@@ -944,11 +707,6 @@ function stopClock() {
   const s = store.get();
   s.game.status = 'ended';
   s.game.endsAt = now();
-  if (s.game.separation && s.game.separation.active) {
-    s.game.separation.active = false;
-    s.game.separation.state = 'inactive';
-    s.game.separation.completedAt = null;
-  }
   addEvent('clock', 'La partie est terminée', { scope: 'all' });
   store.save();
 }
@@ -981,7 +739,6 @@ function snapshotFor(session) {
       reveals: s.game.reveals,
       blocks: s.game.blocks
     },
-    separation: separationFor(session),
     players: visibleFor(session),
     pins: visiblePins(session),
     effects: visibleEffects(session),
@@ -993,11 +750,11 @@ function snapshotFor(session) {
   };
 
   if (session.role === 'player') {
-    base.myRequests = s.requests.filter((r) => r.team === session.team).slice(0, 12);
+    base.myRequests = s.requests.filter((r) => r.team === session.team && r.type !== 'join').slice(0, 12);
     base.teammates = teammatesFor(session);
   }
   if (session.role === 'admin' || session.role === 'viewer') {
-    base.requests = s.requests.slice(0, 40);
+    base.requests = s.requests.filter((r) => r.type !== 'join').slice(0, 40);
     const roleOrder = { player: 0, admin: 1, viewer: 2 };
     const teamOrder = { spy: 0, spied: 1 };
     base.roster = Object.entries(s.codes)
@@ -1006,7 +763,7 @@ function snapshotFor(session) {
         role: c.role,
         team: c.team,
         label: c.label,
-        admitted: c.role === 'player' ? c.admitted === true : true,
+        admitted: true,
         online: positions.has(code) ? now() - positions.get(code).ts < POSITION_STALE_MS : false
       }))
       .sort(
@@ -1031,9 +788,6 @@ module.exports = {
   revokeReveal,
   dropSnapshotPins,
   freezeTeam,
-  refreshSeparation,
-  separationFor,
-  startSeparation,
   playJoker,
   completeChallenge,
   resetChallenge,
@@ -1047,8 +801,6 @@ module.exports = {
   cancelCountdown,
   stopClock,
   isAdmitted,
-  requestAdmission,
-  admittedPlayers,
   canSeeOpponents,
   hasPermanentReveal,
   isBlocked,
