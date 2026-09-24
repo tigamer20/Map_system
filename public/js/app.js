@@ -556,6 +556,63 @@
         html += `<div class="card alertish"><div class="card-title">${escapeHtml(effect.label)}</div>
           <div class="card-sub">Encore <span class="countdown">${fmtClock(effect.until - now())}</span></div></div>`;
       });
+
+      if (me.team === 'spied') {
+        const targets = snapshot.captureTargets || [];
+        html += '<div class="section-label">Capturer un espion</div>';
+        html += `<div class="card accent">
+          <div class="card-sub">Choisissez l'espion et la règle appliquée. Une photo est obligatoire pour une capture par photo.</div>
+          <div class="field"><label for="captureTarget">Espion capturé</label>
+            <select id="captureTarget">${targets.length
+              ? targets.map((p) => `<option value="${escapeHtml(p.code)}">${escapeHtml(p.label)}</option>`).join('')
+              : '<option value="">Aucun espion disponible</option>'}</select>
+          </div>
+          <div class="field"><label for="captureMethod">Comment l'avez-vous capturé ?</label>
+            <select id="captureMethod">
+              <option value="photo">Photo reconnaissable — libération possible</option>
+              <option value="touch">Touché — aucune libération possible</option>
+              <option value="photo_touch">Photo + touché dans les 5 minutes — aucune libération</option>
+            </select>
+          </div>
+          ${capturePhotoPicker('capture', 'Photo où l’espion est facilement reconnaissable', false)}
+          <div class="card-actions"><button class="btn danger small" data-capture${targets.length ? '' : ' disabled'}>Capturer espion</button></div>
+        </div>`;
+      }
+    }
+
+    const ownCapture = isPlayer && me.team === 'spy'
+      ? (snapshot.captures || []).find((capture) => capture.targetCode === me.code && capture.status === 'captured')
+      : null;
+    if (ownCapture) {
+      html += `<div class="card alertish"><div class="card-title">Vous êtes capturé</div>
+        <div class="card-sub">Capture par ${escapeHtml(ownCapture.capturedByLabel)} · ${escapeHtml(captureMethodLabel(ownCapture.method))}</div>
+        ${ownCapture.releaseAllowed ? '<div class="card-sub">L’autre espion peut vous libérer avec une photo où vous êtes facilement reconnaissable.</div>' : '<div class="card-sub">Cette capture ne permet pas de libération.</div>'}
+      </div>`;
+    }
+
+    if (isPlayer && me.team === 'spy') {
+      const releasable = (snapshot.captures || []).find(
+        (capture) => capture.status === 'captured' && capture.releaseAllowed && capture.targetCode !== me.code
+      );
+      if (releasable) {
+        html += `<div class="section-label">Délivrer l'autre espion</div>
+          <div class="card spy"><div class="card-title">${escapeHtml(releasable.targetLabel)}</div>
+            <div class="card-sub">Envoyez une photo où l'espion éliminé est facilement reconnaissable. Avec un admin connecté, elle devra être validée.</div>
+            ${capturePhotoPicker(`release_${releasable.id}`, 'Photo de libération obligatoire', true)}
+            <div class="card-actions"><button class="btn small" data-release="${releasable.id}">Envoyer pour délivrer</button></div>
+          </div>`;
+      }
+    }
+
+    const captures = snapshot.captures || [];
+    if (captures.length) {
+      html += '<div class="section-label">Captures</div>';
+      html += captures.map((capture) => `<div class="card ${capture.status === 'released' ? 'accent' : 'spy'}">
+        <div class="card-head"><div style="flex:1;min-width:0"><div class="card-title">${escapeHtml(capture.targetLabel)}${capture.status === 'released' ? ' — libéré' : ' — capturé'}</div>
+          <div class="card-sub">Par ${escapeHtml(capture.capturedByLabel)} · ${escapeHtml(captureMethodLabel(capture.method))}</div></div>
+          <span class="pill ${capture.status === 'released' ? 'ok' : 'locked'}">${capture.status === 'released' ? 'Libéré' : 'Éliminé'}</span></div>
+        ${capture.proofFile ? `<img src="/api/capture/photo/${capture.id}?token=${encodeURIComponent(token)}" alt="Photo de libération" style="width:100%;border-radius:10px;margin-top:10px" />` : ''}
+      </div>`).join('');
     }
 
     const mine = snapshot.players.filter((p) => p.team === me.team);
@@ -716,6 +773,20 @@
     </div>`;
   }
 
+  function captureMethodLabel(method) {
+    return method === 'touch' ? 'contact' : method === 'photo_touch' ? 'photo + contact' : 'photo';
+  }
+
+  function capturePhotoPicker(key, title, required) {
+    const photo = pendingPhotos[key];
+    return `<div class="req"><b>${escapeHtml(title)}</b>
+      ${photo ? `<img src="${photo}" alt="Aperçu" style="width:100%;border-radius:10px;margin-top:8px" />` : required ? 'Ajoutez-la avant l’envoi.' : 'Ajoutez-la si la règle choisie l’exige.'}
+      <div class="card-actions"><label class="btn ghost small" for="cam_${key}">${photo ? 'Reprendre' : 'Prendre une photo'}</label><label class="btn ghost small" for="gal_${key}">Galerie</label></div>
+      <input id="cam_${key}" type="file" accept="image/*" capture="environment" data-capture-photo="${key}" hidden />
+      <input id="gal_${key}" type="file" accept="image/*" data-capture-photo="${key}" hidden />
+    </div>`;
+  }
+
   function renderChallengesPanel() {
     const me = snapshot.me;
     const mine = (snapshot.challenges || []).filter((c) => c.team === me.team);
@@ -836,7 +907,7 @@
         ? list
             .map(
               (r) => `<div class="card">
-                <div class="card-title">${r.type === 'unlock' ? 'Déblocage de joker' : 'Localisation'} · ${label[r.status] || r.status}</div>
+                <div class="card-title">${r.type === 'unlock' ? 'Déblocage de joker' : r.type === 'release' ? 'Photo de libération' : 'Localisation'} · ${label[r.status] || r.status}</div>
                 <div class="card-sub">${fmtTime(r.createdAt)} · demandé par ${escapeHtml(r.from)}${r.note ? ` · « ${escapeHtml(r.note)} »` : ''}</div>
               </div>`
             )
@@ -859,11 +930,17 @@
               r.type === 'challenge'
                 ? (snapshot.challenges || []).find((c) => c.id === r.payload.challengeId)
                 : null;
+            const capture =
+              r.type === 'release'
+                ? (snapshot.captures || []).find((c) => c.id === r.payload.captureId)
+                : null;
             const entree = r.type === 'join';
             const titre = entree
               ? `${r.from} veut entrer dans la partie`
               : challenge
               ? challenge.title
+              : capture
+              ? `Libération de ${capture.targetLabel}`
               : joker
               ? joker.name
               : 'Localisation';
@@ -879,6 +956,11 @@
                     ? `<img src="/api/challenge/photo/${challenge.id}?token=${encodeURIComponent(token)}" alt="Photo envoyée" style="width:100%;border-radius:10px;margin-top:10px" />`
                     : '<div class="req">Aucune photo : validez sur ce que vous avez vu.</div>'
                 }`;
+            } else if (capture) {
+              corps = `<div class="req"><b>Photo de libération</b>La photo sera publiée uniquement si vous acceptez la libération.</div>
+                ${capture.proofFile
+                  ? `<img src="/api/capture/photo/${capture.id}?token=${encodeURIComponent(token)}" alt="Photo de libération" style="width:100%;border-radius:10px;margin-top:10px" />`
+                  : '<div class="req">Photo indisponible.</div>'}`;
             } else if (joker) {
               corps = `<div class="req"><b>Défi à vérifier</b>${escapeHtml(joker.unlockRequirement || '—')}</div>`;
             } else {
@@ -890,6 +972,8 @@
               boutons = `<button class="btn small" data-decide="${r.id}" data-approve="1">Admettre</button>`;
             } else if (challenge) {
               boutons = `<button class="btn small" data-decide="${r.id}" data-approve="1">Accepter le défi</button>`;
+            } else if (capture) {
+              boutons = `<button class="btn small" data-decide="${r.id}" data-approve="1">Valider la libération</button>`;
             } else if (joker) {
               boutons = `<button class="btn small" data-decide="${r.id}" data-approve="1">Valider le défi</button>`;
             } else {
@@ -917,7 +1001,7 @@
           .map(
             (r) => `<div class="event"><time>${fmtTime(r.decidedAt || r.createdAt)}</time>
               <span class="kind ${r.status === 'denied' ? 'denied' : 'request'}"></span>
-              <span>${TEAM[r.team]} · ${{ unlock: 'joker', challenge: 'défi', location: 'localisation', join: 'entrée' }[r.type] || r.type} · <b>${label[r.status] || r.status}</b></span></div>`
+              <span>${TEAM[r.team]} · ${{ unlock: 'joker', challenge: 'défi', location: 'localisation', join: 'entrée', release: 'libération' }[r.type] || r.type} · <b>${label[r.status] || r.status}</b></span></div>`
           )
           .join('')
       : '<div class="empty">Aucune décision pour le moment.</div>';
@@ -1328,14 +1412,15 @@
     body.querySelectorAll('[data-unlock]').forEach((node) =>
       node.addEventListener('click', async () => {
         const joker = (snapshot.jokers || []).find((j) => j.id === node.dataset.unlock);
-        if (!confirm(`Défi à valider :\n\n${joker.unlockRequirement}\n\nLe maître du jeu doit confirmer.`)) return;
+        const direct = snapshot.me.team === 'spy';
+        if (!confirm(`Défi réalisé :\n\n${joker.unlockRequirement}\n\n${direct ? 'Le joker sera débloqué immédiatement.' : 'Le maître du jeu doit confirmer.'}`)) return;
         node.disabled = true;
         try {
           await api('/api/request', {
             method: 'POST',
             body: JSON.stringify({ type: 'unlock', payload: { jokerId: joker.id } })
           });
-          toast('Déblocage envoyé au maître du jeu.', 'ok');
+          toast(direct ? 'Joker débloqué.' : 'Déblocage envoyé au maître du jeu.', 'ok');
         } catch (err) {
           toast(err.message, 'error');
         }
@@ -1386,6 +1471,70 @@
           return;
         }
         render(true);
+      })
+    );
+
+    body.querySelectorAll('[data-capture-photo]').forEach((node) =>
+      node.addEventListener('change', async () => {
+        const file = node.files && node.files[0];
+        if (!file) return;
+        try {
+          pendingPhotos[node.dataset.capturePhoto] = await compressImage(file);
+        } catch (err) {
+          toast("Ce fichier n'est pas une image lisible.", 'error');
+          return;
+        }
+        render(true);
+      })
+    );
+
+    body.querySelectorAll('[data-capture]').forEach((node) =>
+      node.addEventListener('click', async () => {
+        const target = el('captureTarget');
+        const method = el('captureMethod');
+        const targetCode = target ? target.value : '';
+        const captureMethod = method ? method.value : '';
+        const photo = pendingPhotos.capture;
+        if (!targetCode) return toast('Choisissez un espion.', 'error');
+        if (['photo', 'photo_touch'].includes(captureMethod) && !photo) {
+          return toast('Ajoutez la photo de capture.', 'error');
+        }
+        if (!confirm('Confirmer la capture de cet espion selon cette règle ?')) return;
+        node.disabled = true;
+        try {
+          await api('/api/capture', {
+            method: 'POST',
+            body: JSON.stringify({ targetCode, method: captureMethod, photo })
+          });
+          delete pendingPhotos.capture;
+          toast('Capture enregistrée.', 'ok');
+          refreshState();
+        } catch (err) {
+          toast(err.message, 'error');
+          node.disabled = false;
+        }
+      })
+    );
+
+    body.querySelectorAll('[data-release]').forEach((node) =>
+      node.addEventListener('click', async () => {
+        const captureId = node.dataset.release;
+        const photo = pendingPhotos[`release_${captureId}`];
+        if (!photo) return toast('Ajoutez la photo de libération.', 'error');
+        if (!confirm('Envoyer cette photo pour demander la libération ?')) return;
+        node.disabled = true;
+        try {
+          const result = await api('/api/capture/release', {
+            method: 'POST',
+            body: JSON.stringify({ captureId, photo })
+          });
+          delete pendingPhotos[`release_${captureId}`];
+          toast(result.pending ? 'Photo envoyée à l’administrateur.' : 'Photo acceptée : espion libéré.', 'ok');
+          refreshState();
+        } catch (err) {
+          toast(err.message, 'error');
+          node.disabled = false;
+        }
       })
     );
 

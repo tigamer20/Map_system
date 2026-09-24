@@ -27,7 +27,8 @@ function readConfig(name) {
  * Joker decks, straight from the printed rule sheets.
  *
  * Espions (the runners): 2 shared jokers, each usable once, and each has to be
- * UNLOCKED first by completing a challenge that the admin validates.
+ * UNLOCKED first by completing a challenge; the spies confirm their own
+ * unlocks directly in the app.
  * Espionnes (the hunters): 2 jokers, usable once each, no unlock needed.
  */
 function defaultJokers() {
@@ -328,6 +329,7 @@ function defaultState() {
       effects: [],
       jokers,
       challenges,
+      captures: [],
       pausedAt: null,
       pauseMessage: null
     },
@@ -353,6 +355,7 @@ function ensureShape(state) {
   merged.game.startsAt = (state.game || {}).startsAt || null;
   merged.game.pins = (state.game || {}).pins || [];
   merged.game.effects = (state.game || {}).effects || [];
+  merged.game.captures = (state.game || {}).captures || [];
   merged.push = Object.assign({}, base.push, state.push || {});
   merged.codes = state.codes && Object.keys(state.codes).length ? state.codes : base.codes;
   merged.devices = state.devices || {};

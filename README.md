@@ -123,8 +123,8 @@ qu'il est joué.
 | Yeux fermés | Prendre une photo de tous les membres des espionnés sur la même photo | Les espionnés vont à l'endroit indiqué et ferment les yeux 30 secondes, sans poursuite possible |
 | Défi annulé | Réaliser soi-même le défi que l'on veut réinitialiser | Un défi des espionnés repasse en « non fait » |
 
-Le joueur appuie sur **Défi fait, débloquer**, le maître du jeu vérifie le défi et valide.
-Le joker devient jouable ; au moment de le jouer, l'app demande la précision prévue par
+Le joueur appuie sur **Défi fait, débloquer** ; pour les espions, le déblocage est immédiat
+et ne demande pas de validation du maître du jeu. Le joker devient jouable ; au moment de le jouer, l'app demande la précision prévue par
 la règle (l'endroit, ou le défi concerné) et l'envoie avec la notification.
 
 ### Espionnés — 2 jokers, utilisables directement
@@ -140,9 +140,8 @@ pour la liste des effets disponibles.
 
 ## Déroulé d'une partie
 
-1. Chacun se connecte avec son code et **attend d'être admis** : le maître du jeu voit
-   la demande dans **Validations** et l'accepte. Tant qu'un joueur n'est pas admis, sa
-   position ne circule pas et il ne voit rien de la partie.
+1. Chacun se connecte avec son code et entre directement dans la partie ; aucune
+   admission manuelle par le maître du jeu n'est nécessaire.
 2. Quand tout le monde est là, le maître du jeu **lance le départ** : un décompte sonore
    s'affiche sur tous les écrans, puis le chrono de 5 h démarre. Avant ça, rien n'est
    jouable — ni joker, ni demande, ni défi.
@@ -195,8 +194,20 @@ Le maître du jeu voit l'avancement et les photos dans son onglet **Contrôle**,
 annuler un défi mal validé. Le joker « Défi annulé » des espions, lui, propose la liste
 des défis **déjà validés** : celui qu'ils choisissent repasse en non fait.
 
-La liste par défaut est un exemple — remplacez-la en copiant `config/defis.json.example`
-en `config/defis.json`.
+La liste de la partie est définie dans `config/defis.json` : stylo effaçable, passerelle
+sur une jambe, selfie avec une pancarte du Parti conservateur, parking Wellington Sud et
+photos de cinq animaux. Les défis sont validés directement par l'équipe qui les réalise.
+
+## Capturer et libérer un espion
+
+Depuis l'onglet **Carte**, les espionnés peuvent utiliser **Capturer espion**, choisir
+l'espion et la méthode : photo reconnaissable (libération possible), contact (aucune
+libération) ou photo + contact (aucune libération et positions des espions révélées 30 s).
+
+Pour une capture par photo, l'autre espion peut envoyer une photo où l'espion capturé est
+facilement reconnaissable. Si le maître du jeu est connecté, il valide ou refuse la photo.
+Une validation publie la photo et libère l'espion ; un refus ne publie rien. Sans maître du
+jeu connecté, la photo est publiée et la libération est automatique.
 
 ## La pause
 

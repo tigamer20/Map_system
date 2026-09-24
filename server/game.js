@@ -93,6 +93,31 @@ function allPositions() {
   return Array.from(positions.values()).map((p) => Object.assign({}, p, { stale: p.ts < cutoff }));
 }
 
+function findCapture(captureId) {
+  return store.get().game.captures.find((capture) => capture.id === captureId);
+}
+
+function captureFor(code) {
+  return store.get().game.captures.find(
+    (capture) => capture.targetCode === code && capture.status === 'captured'
+  );
+}
+
+function isSpyEliminated(code) {
+  const entry = store.get().codes[code];
+  return !!entry && entry.role === 'player' && entry.team === 'spy' && !!captureFor(code);
+}
+
+function visibleCaptures(session) {
+  return store.get().game.captures.map((capture) => {
+    const view = Object.assign({}, capture);
+    delete view.captureFile;
+    view.proofFile = capture.proofAccepted || session.role === 'admin' ? capture.proofFile || null : null;
+    view.proofPending = session.role === 'admin' && !!capture.proofFile && !capture.proofAccepted;
+    return view;
+  });
+}
+
 /* -------------------------------------------------------------- visibility */
 
 function isBlocked(team) {
@@ -116,6 +141,7 @@ function visibleFor(session) {
 
   const seeOthers = canSeeOpponents(session.team);
   return list
+    .filter((p) => !isSpyEliminated(p.code) || p.code === session.code)
     .filter((p) => p.team === session.team || seeOthers)
     .map((p) => (p.team === session.team ? p : Object.assign({}, p, { revealed: true })));
 }
@@ -183,6 +209,27 @@ function createRequest(session, type, payload = {}) {
     if (s.requests.some((r) => r.status === 'pending' && r.type === 'unlock' && r.payload.jokerId === joker.id)) {
       throw new Error('Ce déblocage attend déjà une validation.');
     }
+
+    // Les espions valident eux-mêmes les défis qui débloquent leurs jokers.
+    if (session.team === 'spy') {
+      joker.unlocked = true;
+      const instant = {
+        id: id(),
+        type,
+        team: session.team,
+        code: session.code,
+        from: session.label,
+        payload,
+        status: 'approved',
+        createdAt: now(),
+        decidedAt: now(),
+        decidedBy: 'auto-validation des espions',
+        note: null
+      };
+      addEvent('joker', `« ${joker.name} » est débloqué pour les Espions`, { scope: 'all' });
+      store.save();
+      return instant;
+    }
   }
 
   const request = {
@@ -240,7 +287,7 @@ function decideRequest(requestId, approve, options = {}) {
     }
   }
 
-  if (request.type === 'challenge') {
+    if (request.type === 'challenge') {
       const challenge = findChallenge(request.payload.challengeId);
       if (challenge) {
         challenge.pending = false;
@@ -249,6 +296,10 @@ function decideRequest(requestId, approve, options = {}) {
         challenge.submittedAt = null;
         challenge.submittedBy = null;
       }
+    }
+    if (request.type === 'release') {
+      const capture = findCapture(request.payload.captureId);
+      if (capture) decideRelease(capture, false);
     }
     addEvent('denied', `Demande des ${teamName(request.team).toLowerCase()} refusée`, {
       team: request.team,
@@ -318,6 +369,25 @@ function decideRequest(requestId, approve, options = {}) {
         kind: 'granted'
       });
     }
+  }
+
+  if (request.type === 'release') {
+    const capture = findCapture(request.payload.captureId);
+    if (!capture) throw new Error('Capture introuvable.');
+    decideRelease(capture, true);
+    notify.push({
+      team: 'spy',
+      title: 'Espion libéré',
+      body: `${capture.targetLabel} est libéré : la photo a été acceptée.`,
+      kind: 'granted',
+      loud: true
+    });
+    notify.push({
+      team: 'spied',
+      title: 'Libération confirmée',
+      body: `La photo de libération de ${capture.targetLabel} a été acceptée.`,
+      kind: 'announce'
+    });
   }
 
   if (request.type === 'unlock') {
@@ -620,6 +690,108 @@ function completeChallenge(session, challengeId, photoFile, answer) {
   return challenge;
 }
 
+/** Capture d'un espion par un espionné, selon les règles de la partie. */
+function captureSpy(session, targetCode, method, photoFile) {
+  assertRunning();
+  if (session.role !== 'player' || session.team !== 'spied') {
+    throw new Error('Seuls les espionnés peuvent capturer un espion.');
+  }
+  const target = store.get().codes[targetCode];
+  if (!target || target.role !== 'player' || target.team !== 'spy') throw new Error('Espion inconnu.');
+  if (!['photo', 'touch', 'photo_touch'].includes(method)) throw new Error('Méthode de capture inconnue.');
+  if (isSpyEliminated(targetCode)) throw new Error('Cet espion est déjà capturé.');
+  if (['photo', 'photo_touch'].includes(method) && !photoFile) {
+    throw new Error('Cette capture demande une photo où l’espion est reconnaissable.');
+  }
+
+  const capture = {
+    id: id(),
+    targetCode,
+    targetLabel: target.label,
+    capturedBy: session.code,
+    capturedByLabel: session.label,
+    method,
+    capturedAt: now(),
+    status: 'captured',
+    releaseAllowed: method === 'photo',
+    // Cette photo documente la capture. La photo de libération est distincte.
+    captureFile: photoFile || null,
+    proofFile: null,
+    proofAccepted: false,
+    proofSubmittedAt: null,
+    releasedAt: null
+  };
+  store.get().game.captures.unshift(capture);
+
+  // La combinaison photo + contact donne 30 secondes de position aux espionnés.
+  if (method === 'photo_touch') dropSnapshotPins('spied', 30);
+  addEvent(
+    'capture',
+    `${session.label} capture ${target.label} (${method === 'touch' ? 'contact' : method === 'photo_touch' ? 'photo + contact' : 'photo'})`,
+    { scope: 'all' }
+  );
+  store.save();
+  return capture;
+}
+
+/** Soumet la photo de libération par l'autre espion. */
+function submitRelease(session, captureId, proofFile, adminOnline) {
+  assertRunning();
+  if (session.role !== 'player' || session.team !== 'spy') {
+    throw new Error('Seul l’autre espion peut demander une libération.');
+  }
+  const capture = findCapture(captureId);
+  if (!capture || capture.status !== 'captured') throw new Error('Capture introuvable ou déjà terminée.');
+  if (!capture.releaseAllowed) throw new Error('Cette capture ne permet pas de libération.');
+  if (capture.targetCode === session.code) throw new Error('L’espion capturé ne peut pas se libérer lui-même.');
+  if (!proofFile) throw new Error('Ajoutez une photo où l’espion est facilement reconnaissable.');
+  if (capture.proofFile) throw new Error('Une photo de libération est déjà en attente.');
+
+  capture.proofFile = proofFile;
+  capture.proofSubmittedAt = now();
+  if (adminOnline) {
+    const request = {
+      id: id(),
+      type: 'release',
+      team: 'spy',
+      code: session.code,
+      from: session.label,
+      payload: { captureId: capture.id },
+      status: 'pending',
+      createdAt: now(),
+      decidedAt: null,
+      decidedBy: null,
+      note: null
+    };
+    store.get().requests.unshift(request);
+    addEvent('capture', `Photo de libération envoyée pour ${capture.targetLabel}`, { scope: 'team', team: 'spy' });
+    store.save();
+    return { capture, request, pending: true };
+  }
+
+  capture.status = 'released';
+  capture.proofAccepted = true;
+  capture.releasedAt = now();
+  addEvent('capture', `${capture.targetLabel} est libéré automatiquement`, { scope: 'all' });
+  store.save();
+  return { capture, request: null, pending: false };
+}
+
+function decideRelease(capture, approve) {
+  if (!capture) throw new Error('Capture introuvable.');
+  if (approve) {
+    capture.status = 'released';
+    capture.proofAccepted = true;
+    capture.releasedAt = now();
+    addEvent('capture', `${capture.targetLabel} est libéré par le maître du jeu`, { scope: 'all' });
+  } else {
+    capture.proofFile = null;
+    capture.proofAccepted = false;
+    addEvent('capture', `Photo de libération refusée pour ${capture.targetLabel}`, { scope: 'team', team: 'spy' });
+  }
+  store.save();
+}
+
 /** Remet un défi en « non fait » : joker des espions, ou correction de l'admin. */
 function resetChallenge(id, by) {
   const challenge = findChallenge(id);
@@ -726,7 +898,8 @@ function snapshotFor(session) {
       isHunter: session.role === 'player' ? session.team === hunters : false,
       admitted: isAdmitted(session),
       seesAlways: session.role === 'player' ? hasPermanentReveal(session.team) : false,
-      seenAlways: session.role === 'player' ? hasPermanentReveal(otherTeam(session.team)) : false
+      seenAlways: session.role === 'player' ? hasPermanentReveal(otherTeam(session.team)) : false,
+      eliminated: session.role === 'player' ? isSpyEliminated(session.code) : false
     },
     game: {
       status: s.game.status,
@@ -745,6 +918,11 @@ function snapshotFor(session) {
     events: visibleEvents(session),
     challenges: visibleChallenges(session),
     jokers: session.role === 'player' ? s.game.jokers[session.team] : s.game.jokers,
+    captures: visibleCaptures(session),
+    captureTargets:
+      session.role === 'player' && session.team === 'spied'
+        ? teamMembers('spy').filter((member) => !isSpyEliminated(member.code))
+        : [],
     canSeeOpponents: session.role === 'player' ? canSeeOpponents(session.team) : true,
     jammed: session.role === 'player' ? isBlocked(session.team) : false
   };
@@ -782,6 +960,11 @@ module.exports = {
   allPositions,
   visibleFor,
   snapshotFor,
+  findCapture,
+  captureSpy,
+  submitRelease,
+  decideRelease,
+  isSpyEliminated,
   createRequest,
   decideRequest,
   grantReveal,

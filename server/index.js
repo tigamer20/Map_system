@@ -22,7 +22,7 @@ fs.mkdirSync(UPLOAD_DIR, { recursive: true });
 
 const app = express();
 app.set('trust proxy', true);
-app.use(express.json({ limit: '128kb' }));
+app.use(express.json({ limit: '10mb' }));
 app.use(express.static(PUBLIC_DIR, { extensions: ['html'] }));
 app.use('/vendor/maplibre', express.static(path.join(__dirname, '..', 'node_modules', 'maplibre-gl', 'dist')));
 
@@ -168,6 +168,15 @@ app.post('/api/logout', auth, (req, res) => {
 // navigateur a vidé son localStorage mais gardé le cookie.
 app.get('/api/me', auth, (req, res) => res.json(req.session));
 
+function adminIsConnected() {
+  let connected = false;
+  if (typeof wss === 'undefined') return false;
+  wss.clients.forEach((socket) => {
+    if (socket.readyState === 1 && socket.session && socket.session.role === 'admin') connected = true;
+  });
+  return connected;
+}
+
 app.get('/api/state', auth, (req, res) => res.json(game.snapshotFor(req.session)));
 
 app.post('/api/position', auth, (req, res) => {
@@ -257,6 +266,102 @@ app.get('/api/challenge/photo/:id', auth, (req, res) => {
   if (!allowed) return res.status(403).json({ error: 'Photo réservée à son équipe.' });
 
   const file = path.join(UPLOAD_DIR, path.basename(challenge.photoFile));
+  if (!fs.existsSync(file)) return res.status(404).json({ error: 'Photo introuvable.' });
+  res.sendFile(file);
+});
+
+/** Capture d'un espion par un espionné. */
+app.post('/api/capture', auth, express.json({ limit: '8mb' }), async (req, res) => {
+  let written = null;
+  try {
+    if (req.session.role !== 'player') throw new Error('Réservé aux joueurs.');
+    const method = String(req.body.method || '');
+    const photoSent = typeof req.body.photo === 'string' && req.body.photo.length > 0;
+    if (['photo', 'photo_touch'].includes(method) && !photoSent) {
+      throw new Error('Cette capture demande une photo où l’espion est reconnaissable.');
+    }
+    if (photoSent) {
+      const match = /^data:image\/(jpeg|png|webp);base64,([A-Za-z0-9+/=]+)$/.exec(req.body.photo);
+      if (!match) throw new Error('Envoyez une photo (JPEG, PNG ou WebP).');
+      const buffer = Buffer.from(match[2], 'base64');
+      if (buffer.length > 6 * 1024 * 1024) throw new Error('Photo trop lourde.');
+      written = `capture-${Date.now()}-${crypto.randomBytes(4).toString('hex')}.${match[1] === 'jpeg' ? 'jpg' : match[1]}`;
+      fs.writeFileSync(path.join(UPLOAD_DIR, written), buffer);
+    }
+    const capture = game.captureSpy(req.session, req.body.targetCode, method, written);
+    broadcast();
+    await notifyTeam('spied', {
+      title: 'Espion capturé',
+      body: `${capture.targetLabel} a été capturé (${method === 'touch' ? 'contact' : method === 'photo_touch' ? 'photo + contact' : 'photo'}).`,
+      kind: 'capture',
+      loud: true
+    });
+    await notifyTeam('spy', {
+      title: 'Vous êtes capturés',
+      body: `${capture.targetLabel} est capturé.`,
+      kind: 'capture',
+      loud: true
+    });
+    res.json({ ok: true, capture });
+  } catch (err) {
+    if (written) {
+      try { fs.unlinkSync(path.join(UPLOAD_DIR, path.basename(written))); } catch (_) {}
+    }
+    res.status(400).json({ error: err.message });
+  }
+});
+
+/** Preuve envoyée par l'autre espion pour libérer un espion capturé par photo. */
+app.post('/api/capture/release', auth, express.json({ limit: '8mb' }), async (req, res) => {
+  let written = null;
+  try {
+    if (req.session.role !== 'player') throw new Error('Réservé aux joueurs.');
+    const match = /^data:image\/(jpeg|png|webp);base64,([A-Za-z0-9+/=]+)$/.exec(req.body.photo || '');
+    if (!match) throw new Error('Envoyez une photo (JPEG, PNG ou WebP).');
+    const buffer = Buffer.from(match[2], 'base64');
+    if (buffer.length > 6 * 1024 * 1024) throw new Error('Photo trop lourde.');
+    written = `release-${Date.now()}-${crypto.randomBytes(4).toString('hex')}.${match[1] === 'jpeg' ? 'jpg' : match[1]}`;
+    fs.writeFileSync(path.join(UPLOAD_DIR, written), buffer);
+
+    const result = game.submitRelease(req.session, req.body.captureId, written, adminIsConnected());
+    broadcast();
+    if (result.pending) {
+      await notifyRoles(['admin'], {
+        title: 'Photo de libération à valider',
+        body: `Une photo doit être vérifiée pour libérer ${result.capture.targetLabel}.`,
+        kind: 'request'
+      });
+      res.json({ ok: true, pending: true });
+      return;
+    }
+    await notifyTeam('spy', {
+      title: 'Espion libéré',
+      body: `${result.capture.targetLabel} est libéré automatiquement : aucun admin n’est connecté.`,
+      kind: 'granted',
+      loud: true
+    });
+    await notifyTeam('spied', {
+      title: 'Libération automatique',
+      body: `La photo de ${result.capture.targetLabel} est publiée et l’espion est libéré.`,
+      kind: 'announce'
+    });
+    res.json({ ok: true, pending: false });
+  } catch (err) {
+    if (written) {
+      try { fs.unlinkSync(path.join(UPLOAD_DIR, path.basename(written))); } catch (_) {}
+    }
+    res.status(400).json({ error: err.message });
+  }
+});
+
+app.get('/api/capture/photo/:id', auth, (req, res) => {
+  const capture = game.findCapture(req.params.id);
+  if (!capture || !capture.proofFile) return res.status(404).json({ error: 'Photo introuvable.' });
+  const publicPhoto = capture.proofAccepted;
+  if (!publicPhoto && req.session.role !== 'admin') {
+    return res.status(404).json({ error: 'Photo non publiée.' });
+  }
+  const file = path.join(UPLOAD_DIR, path.basename(capture.proofFile));
   if (!fs.existsSync(file)) return res.status(404).json({ error: 'Photo introuvable.' });
   res.sendFile(file);
 });

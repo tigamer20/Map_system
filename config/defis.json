@@ -7,24 +7,23 @@
   {
     "title": "Marcher toute la passerelle de la chute",
     "description": "Une personne de l'équipe doit la faire sur une seule jambe.",
-    "photo": false,
-    "approval": true
+    "photo": false
   },
   {
-    "title": "Trouver un inconnu qui mesure 6 pieds 2 ou plus",
+    "title": "Prendre un selfie avec une pancarte électorale du parti conservateur",
     "description": "",
-    "photo": "optional"
-  },
-  {
-    "title": "Monter tous les étages du parking Wellington sud en moins d'une minute",
-    "description": "Du sous-sol jusqu'au toit, sans les escaliers ni l'ascenseur. Au moins 2 joueurs doivent le faire.",
     "photo": true,
-    "photoLabel": "Capture d'écran du chrono"
+    "photoLabel": "Selfie avec la pancarte"
   },
   {
-    "title": "Demander à un inconnu de vous classer du plus cave au plus intelligent",
+    "title": "Monter tous les étages du parking Wellington sud en moins d'une minute 30",
+    "description": "Du sous-sol jusqu'au toit, sans utiliser les escaliers ni l'ascenseur. Au moins 2 joueurs doivent le faire.",
+    "photo": false
+  },
+  {
+    "title": "Prendre des photos de 5 animaux",
     "description": "",
-    "photo": false,
-    "answer": "ranking"
+    "photo": true,
+    "photoLabel": "Photos des 5 animaux"
   }
 ]
