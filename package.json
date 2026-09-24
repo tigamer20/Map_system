@@ -1,8 +1,8 @@
 {
-  "name": "traque",
+  "name": "Espions",
   "version": "1.0.0",
   "private": true,
-  "description": "Jeu de traque en direct : espions vs espionnés, carte live, validations et jokers.",
+  "description": "App web pour la vidéo d'espion #1",
   "type": "commonjs",
   "main": "server/index.js",
   "scripts": {
